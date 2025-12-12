@@ -6,7 +6,7 @@
   },
   "deploy": {
     "startCommand": "python debug_worker.py",
-    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyType": "ON_FAILURE", 
     "restartPolicyMaxRetries": 10
   }
 }
