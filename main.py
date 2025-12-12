@@ -7,6 +7,8 @@ import config
 from database import Database
 from utils import start_background_check
 
+from flask import Flask, request
+
 bot = telebot.TeleBot(config.BOT_TOKEN)
 db = Database()
 
@@ -833,25 +835,77 @@ Database.get_player_by_name = get_player_by_name
 #             print("🔄 Переподключаемся через 10 секунд...")
 #             time.sleep(10)
 
+# if __name__ == '__main__':
+#     print("🎅 Запуск бота Тайный Санта...")
+#     print("=" * 50)
+#     print(f"🤖 Режим: {'Railway' if os.getenv('RAILWAY_ENVIRONMENT') else 'Локальный'}")
+#     print(f"📁 База данных: {db.db_path if hasattr(db, 'db_path') else 'secret_santa.db'}")
+#     print("=" * 50)
+
+#     start_background_check(bot)
+
+#     print("🤖 Бот запущен и готов к работе!")
+#     print("=" * 50)
+
+#     import time
+
+#     while True:
+#         try:
+#             print("🔄 Подключаемся к Telegram API...")
+#             bot.polling(none_stop=True, timeout=60)
+#         except Exception as e:
+#             print(f"❌ Ошибка подключения: {e}")
+#             print("🔄 Переподключаемся через 10 секунд...")
+#             time.sleep(10)
+
+app = Flask(__name__)
+
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    if request.headers.get('content-type') == 'application/json':
+        json_string = request.get_data().decode('utf-8')
+        update = telebot.types.Update.de_json(json_string)
+        bot.process_new_updates([update])
+        return ''
+    return 'OK'
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    return 'OK', 200
+
+# УДАЛИТЕ ВСЁ НИЖЕ ЭТОЙ СТРОКИ И ЗАМЕНИТЕ НА ЭТОТ КОД:
+
 if __name__ == '__main__':
     print("🎅 Запуск бота Тайный Санта...")
     print("=" * 50)
     print(f"🤖 Режим: {'Railway' if os.getenv('RAILWAY_ENVIRONMENT') else 'Локальный'}")
-    print(f"📁 База данных: {db.db_path if hasattr(db, 'db_path') else 'secret_santa.db'}")
-    print("=" * 50)
-
+    
+    # Запускаем фоновую проверку дат
     start_background_check(bot)
-
+    
+    # Получаем порт из окружения (Railway сам назначает порт)
+    port = int(os.environ.get('PORT', 5000))
+    
+    # Формируем URL для вебхука
+    domain = os.environ.get('RAILWAY_PUBLIC_DOMAIN', 'secretsanta-bot2-production.up.railway.app')
+    webhook_url = f"https://{domain}/webhook"
+    
+    print(f"🌐 Домен: {domain}")
+    print(f"🔗 Вебхук URL: {webhook_url}")
+    print(f"🚀 Порт: {port}")
+    print("=" * 50)
+    
+    try:
+        # Устанавливаем вебхук
+        bot.remove_webhook()
+        bot.set_webhook(url=webhook_url)
+        print(f"✅ Вебхук установлен!")
+    except Exception as e:
+        print(f"⚠️ Не удалось установить вебхук: {e}")
+        print("ℹ️ Проверьте, что BOT_TOKEN установлен в переменных окружения")
+    
     print("🤖 Бот запущен и готов к работе!")
     print("=" * 50)
-
-    import time
-
-    while True:
-        try:
-            print("🔄 Подключаемся к Telegram API...")
-            bot.polling(none_stop=True, timeout=60)
-        except Exception as e:
-            print(f"❌ Ошибка подключения: {e}")
-            print("🔄 Переподключаемся через 10 секунд...")
-            time.sleep(10)
+    
+    # Запускаем Flask сервер
+    app.run(host='0.0.0.0', port=port)
