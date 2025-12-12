@@ -1,15 +1,9 @@
 import os
 
-# ВРЕМЕННО: Жёстко заданный токен для проверки работы
-BOT_TOKEN = "8425931021:AAFk0RDxPhzpUH30kJyFAjPEDMBxQnfkgIA"
+# Используем переменную окружения, если она есть
+BOT_TOKEN = os.environ.get('BOT_TOKEN', "8425931021:AAFk0RDxPhzpUH30kJyFAjPEDMBxQnfkgIA")
 
-# Отладочная информация
-print("=" * 50)
-print("🔧 DEBUG MODE: Используется жёстко заданный токен!")
-print(f"Токен из окружения: {os.environ.get('BOT_TOKEN', 'НЕ НАЙДЕН')}")
-print(f"RAILWAY_ENVIRONMENT: {os.environ.get('RAILWAY_ENVIRONMENT', 'НЕ НАЙДЕН')}")
-print(f"Используемый токен: {BOT_TOKEN[:10]}...")
-print("=" * 50)
+print(f"✅ BOT_TOKEN загружен: {BOT_TOKEN[:15]}...")
 
 # ID администраторов
 ADMIN_IDS = [1931547001]
