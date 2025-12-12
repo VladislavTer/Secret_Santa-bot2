@@ -7,6 +7,12 @@ from database import Database
 from utils import start_background_check
 from flask import Flask, request
 
+try:
+    from keep_alive import keep_alive
+    print("✅ Keep-alive загружен")
+except:
+    print("⚠️ Keep-alive не загружен")
+
 # ================ ИНИЦИАЛИЗАЦИЯ ================
 print("=" * 60)
 print("🤖 ИНИЦИАЛИЗАЦИЯ ТАЙНОГО САНТЫ")
