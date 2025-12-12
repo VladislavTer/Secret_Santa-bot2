@@ -1,61 +1,35 @@
-# import os
-# from dotenv import load_dotenv
-
-# # Загружаем переменные из .env файла
-# load_dotenv()
-
-# # Токен бота (берётся из переменных окружения)
-# BOT_TOKEN = os.getenv('BOT_TOKEN', '')
-
-# # Проверка наличия токена
-# if not BOT_TOKEN:
-#     print("⚠️ ВНИМАНИЕ: BOT_TOKEN не найден!")
-#     print("Добавьте BOT_TOKEN в файл .env или переменные окружения")
-
-# # ID администраторов (замените на свои)
-# ADMIN_IDS = [1931547001]
-
-# # Дата жеребьёвки
-# DRAW_YEAR = 2025
-# DRAW_MONTH = 12
-# DRAW_DAY = 15
-
-# # Дата дедлайна подарков
-# GIFT_DEADLINE_MONTH = 12
-# GIFT_DEADLINE_DAY = 24
-
-# # Бюджет подарка
-# GIFT_BUDGET = "~500₽"
-
 import os
-from dotenv import load_dotenv
 
-# Проверяем, локально ли запущен бот или на Railway
-is_railway = os.getenv('RAILWAY_ENVIRONMENT') == 'production'
+# ВАЖНО: На Railway используем RAILWAY_ENVIRONMENT, но в ваших переменных это "railway"
+is_railway = os.environ.get('RAILWAY_ENVIRONMENT') is not None
 
-# Загружаем .env только при локальном запуске
+# Загружаем .env только если НЕ на Railway
 if not is_railway:
+    from dotenv import load_dotenv
     load_dotenv()
 
-# Токен бота (берётся из переменных окружения)
-BOT_TOKEN = os.getenv('BOT_TOKEN', '')
+# Токен бота - ОБЯЗАТЕЛЬНО используем os.environ.get() для Railway
+BOT_TOKEN = os.environ.get('BOT_TOKEN')  # <- ИЗМЕНИТЬ НА environ.get()
 
 # Проверка наличия токена
 if not BOT_TOKEN:
-    print("⚠️ ВНИМАНИЕ: BOT_TOKEN не найден!")
-    print("Добавьте BOT_TOKEN в файл .env или переменные окружения")
+    print("=" * 50)
+    print("❌ КРИТИЧЕСКАЯ ОШИБКА: BOT_TOKEN не найден!")
+    print(f"Загружены переменные окружения: {list(os.environ.keys())}")
+    print(f"RAILWAY_ENVIRONMENT: {os.environ.get('RAILWAY_ENVIRONMENT')}")
+    print("=" * 50)
+    # Принудительно останавливаем бота
+    raise ValueError("BOT_TOKEN не найден в переменных окружения")
+else:
+    print(f"✅ BOT_TOKEN загружен успешно ({len(BOT_TOKEN)} символов)")
 
-# ID администраторов (замените на свои)
+# ID администраторов
 ADMIN_IDS = [1931547001]
 
-# Дата жеребьёвки
+# Даты
 DRAW_YEAR = 2025
 DRAW_MONTH = 12
 DRAW_DAY = 15
-
-# Дата дедлайна подарков
 GIFT_DEADLINE_MONTH = 12
 GIFT_DEADLINE_DAY = 24
-
-# Бюджет подарка
 GIFT_BUDGET = "~500₽"
