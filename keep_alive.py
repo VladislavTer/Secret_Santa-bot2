@@ -1,6 +1,5 @@
 import requests
 import time
-import threading
 import os
 
 def keep_alive():
@@ -9,17 +8,24 @@ def keep_alive():
     
     print(f"🔄 Keep-alive запущен для {url}")
     
+    # Ждём дополнительно на всякий случай
+    time.sleep(5)
+    
     while True:
         try:
-            # Запрос к health endpoint
-            response = requests.get(f"https://{url}/health", timeout=10)
-            print(f"✅ Keep-alive: {response.status_code} - {time.ctime()}")
+            # Пробуем разные эндпоинты
+            endpoints = ['/health', '/', '/setup_webhook']
+            
+            for endpoint in endpoints:
+                try:
+                    response = requests.get(f"https://{url}{endpoint}", timeout=10)
+                    print(f"✅ Keep-alive {endpoint}: {response.status_code}")
+                    break  # Если один сработал, остальные не проверяем
+                except:
+                    continue
+            
         except Exception as e:
             print(f"⚠️ Keep-alive ошибка: {e}")
         
-        # Ждём 4 минуты (240 секунд) - меньше времени ожидания Railway
+        # Ждём 4 минуты
         time.sleep(240)
-
-# Запускаем в отдельном потоке
-thread = threading.Thread(target=keep_alive, daemon=True)
-thread.start()
