@@ -1,7 +1,7 @@
 import os
 
-# Используем переменную окружения, если она есть
-BOT_TOKEN = os.environ.get('BOT_TOKEN', "8425931021:AAFk0RDxPhzpUH30kJyFAjPEDMBxQnfkgIA")
+# Простой и надёжный config
+BOT_TOKEN = os.environ.get('BOT_TOKEN', '8425931021:AAFk0RDxPhzpUH30kJyFAjPEDMBxQnfkgIA')
 
 print(f"✅ BOT_TOKEN загружен: {BOT_TOKEN[:15]}...")
 
@@ -15,3 +15,8 @@ DRAW_DAY = 15
 GIFT_DEADLINE_MONTH = 12
 GIFT_DEADLINE_DAY = 24
 GIFT_BUDGET = "~500₽"
+
+# Дата раскрытия (ДОБАВЬТЕ!)
+REVEAL_YEAR = 2025
+REVEAL_MONTH = 12
+REVEAL_DAY = 31
