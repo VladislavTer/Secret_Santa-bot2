@@ -1,27 +1,15 @@
 import os
 
-# ВАЖНО: На Railway используем RAILWAY_ENVIRONMENT, но в ваших переменных это "railway"
-is_railway = os.environ.get('RAILWAY_ENVIRONMENT') is not None
+# ВРЕМЕННО: Жёстко заданный токен для проверки работы
+BOT_TOKEN = "8425931021:AAFk0RDxPhzpUH30kJyFAjPEDMBxQnfkgIA"
 
-# Загружаем .env только если НЕ на Railway
-if not is_railway:
-    from dotenv import load_dotenv
-    load_dotenv()
-
-# Токен бота - ОБЯЗАТЕЛЬНО используем os.environ.get() для Railway
-BOT_TOKEN = os.environ.get('BOT_TOKEN')  # <- ИЗМЕНИТЬ НА environ.get()
-
-# Проверка наличия токена
-if not BOT_TOKEN:
-    print("=" * 50)
-    print("❌ КРИТИЧЕСКАЯ ОШИБКА: BOT_TOKEN не найден!")
-    print(f"Загружены переменные окружения: {list(os.environ.keys())}")
-    print(f"RAILWAY_ENVIRONMENT: {os.environ.get('RAILWAY_ENVIRONMENT')}")
-    print("=" * 50)
-    # Принудительно останавливаем бота
-    raise ValueError("BOT_TOKEN не найден в переменных окружения")
-else:
-    print(f"✅ BOT_TOKEN загружен успешно ({len(BOT_TOKEN)} символов)")
+# Отладочная информация
+print("=" * 50)
+print("🔧 DEBUG MODE: Используется жёстко заданный токен!")
+print(f"Токен из окружения: {os.environ.get('BOT_TOKEN', 'НЕ НАЙДЕН')}")
+print(f"RAILWAY_ENVIRONMENT: {os.environ.get('RAILWAY_ENVIRONMENT', 'НЕ НАЙДЕН')}")
+print(f"Используемый токен: {BOT_TOKEN[:10]}...")
+print("=" * 50)
 
 # ID администраторов
 ADMIN_IDS = [1931547001]
