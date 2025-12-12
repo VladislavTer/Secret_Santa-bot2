@@ -7,12 +7,41 @@ from database import Database
 from utils import start_background_check
 from flask import Flask, request
 
-# Инициализация Flask приложения ПЕРВОЙ
+# ================ ИНИЦИАЛИЗАЦИЯ ================
+print("=" * 60)
+print("🤖 ИНИЦИАЛИЗАЦИЯ ТАЙНОГО САНТЫ")
+print("=" * 60)
+
+# 1. Сначала Flask app (для health-check)
 app = Flask(__name__)
 
-# Инициализация бота
-bot = telebot.TeleBot(config.BOT_TOKEN)
-db = Database()
+# 2. Базовые health-check маршруты (ДО ВСЕГО!)
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Моментальный health-check для Railway"""
+    return 'OK', 200
+
+@app.route('/')
+def home():
+    return '🎅 Тайный Санта работает!'
+
+print("✅ Flask app создан")
+
+# 3. Инициализация бота
+try:
+    bot = telebot.TeleBot(config.BOT_TOKEN)
+    print(f"✅ Бот инициализирован: {config.BOT_TOKEN[:15]}...")
+except Exception as e:
+    print(f"❌ Ошибка инициализации бота: {e}")
+    raise
+
+# 4. База данных
+try:
+    db = Database()
+    print(f"✅ База данных: {db.db_path if hasattr(db, 'db_path') else 'secret_santa.db'}")
+except Exception as e:
+    print(f"❌ Ошибка базы данных: {e}")
+    raise
 
 user_states = {}
 
@@ -20,6 +49,47 @@ user_states = {}
 REVEAL_YEAR = 2025
 REVEAL_MONTH = 12
 REVEAL_DAY = 31
+
+print("=" * 60)
+print("✅ ВСЕ КОМПОНЕНТЫ ИНИЦИАЛИЗИРОВАНЫ")
+print("=" * 60)
+
+# ================ ФУНКЦИЯ УСТАНОВКИ ВЕБХУКА ================
+def setup_webhook_on_startup():
+    """Установка вебхука при запуске приложения"""
+    try:
+        # Даём время Railway на запуск
+        import time
+        time.sleep(2)
+        
+        domain = os.environ.get('RAILWAY_PUBLIC_DOMAIN', 'secretsanta-bot2-production.up.railway.app')
+        webhook_url = f"https://{domain}/webhook"
+        
+        print(f"🌐 Устанавливаю вебхук: {webhook_url}")
+        
+        # Удаляем старый вебхук и устанавливаем новый
+        bot.remove_webhook()
+        time.sleep(1)
+        bot.set_webhook(url=webhook_url)
+        
+        print("✅ Вебхук установлен!")
+        return True
+    except Exception as e:
+        print(f"⚠️ Не удалось установить вебхук: {e}")
+        print("ℹ️ Будет использован polling режим")
+        return False
+
+# ================ ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ DATABASE ================
+def get_player_by_name(self, full_name):
+    """Найти игрока по полному имени"""
+    conn = self.get_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM players WHERE full_name = ?', (full_name,))
+    player = cursor.fetchone()
+    conn.close()
+    return player
+
+Database.get_player_by_name = get_player_by_name
 
 # ================ ОСНОВНЫЕ HANDLERS ================
 @bot.message_handler(commands=['start'])
@@ -200,18 +270,7 @@ def save_wishlist_command(message):
                      'Посмотреть свой список можно командой /mywish',
                      parse_mode='Markdown')
 
-
-def get_player_by_name(self, full_name):
-    """Найти игрока по полному имени"""
-    conn = self.get_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT * FROM players WHERE full_name = ?', (full_name,))
-    player = cursor.fetchone()
-    conn.close()
-    return player
-
-Database.get_player_by_name = get_player_by_name
-
+# ================ ADMIN HANDLERS ================
 def handle_admin_callback(call):
     try:
         if call.data == 'admin_draw':
@@ -428,7 +487,7 @@ def process_reveal_one(message):
     except Exception as e:
         bot.send_message(message.chat.id, f"❌ Ошибка: {str(e)}")
 
-# ================ FLASK ROUTES ================
+# ================ WEBHOOK HANDLER ================
 @app.route('/webhook', methods=['POST'])
 def webhook():
     if request.headers.get('content-type') == 'application/json':
@@ -438,27 +497,34 @@ def webhook():
         return ''
     return 'OK'
 
-@app.route('/health', methods=['GET'])
-def health_check():
-    return 'OK', 200
-
 @app.route('/setup_webhook', methods=['GET'])
-def setup_webhook():
+def setup_webhook_route():
     """Ручная установка вебхука"""
     try:
-        domain = os.environ.get('RAILWAY_PUBLIC_DOMAIN', 'secretsanta-bot2-production.up.railway.app')
-        webhook_url = f"https://{domain}/webhook"
-        bot.remove_webhook()
-        bot.set_webhook(url=webhook_url)
-        return f"✅ Вебхук установлен: {webhook_url}"
+        success = setup_webhook_on_startup()
+        if success:
+            return "✅ Вебхук установлен!"
+        else:
+            return "❌ Не удалось установить вебхук"
     except Exception as e:
         return f"❌ Ошибка: {e}"
 
-# ================ ИНИЦИАЛИЗАЦИЯ ПРИ ЗАПУСКЕ ================
+# ================ ЗАПУСК ПРИЛОЖЕНИЯ ================
 # Этот код выполнится при импорте модуля
-print("🤖 Инициализация Тайного Санты...")
-print(f"✅ Токен загружен: {config.BOT_TOKEN[:15]}...")
-print(f"✅ База данных: {db.db_path if hasattr(db, 'db_path') else 'secret_santa.db'}")
 
-# Запускаем фоновую проверку дат
-start_background_check(bot)
+print("🔄 Устанавливаю вебхук...")
+webhook_success = setup_webhook_on_startup()
+
+print("🔄 Запускаю фоновую проверку дат...")
+try:
+    start_background_check(bot)
+    print("✅ Фоновая проверка запущена")
+except Exception as e:
+    print(f"⚠️ Не удалось запустить фоновую проверку: {e}")
+
+print("=" * 60)
+print("🎅 ТАЙНЫЙ САНТА ГОТОВ К РАБОТЕ!")
+print("=" * 60)
+
+# Экспортируем для использования в других файлах
+# from main import app, bot, db
