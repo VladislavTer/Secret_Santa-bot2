@@ -4,18 +4,11 @@ from telebot import types
 from datetime import date
 import config
 from database import Database
-from utils import start_background_check
 from flask import Flask, request
-
-try:
-    from keep_alive import keep_alive
-    print("✅ Keep-alive загружен")
-except:
-    print("⚠️ Keep-alive не загружен")
 
 # ================ ИНИЦИАЛИЗАЦИЯ ================
 print("=" * 60)
-print("🤖 ИНИЦИАЛИЗАЦИЯ ТАЙНОГО САНТЫ")
+print("🤖 ЗАГРУЗКА ТАЙНОГО САНТЫ")
 print("=" * 60)
 
 # 1. Сначала Flask app (для health-check)
@@ -59,31 +52,6 @@ REVEAL_DAY = 31
 print("=" * 60)
 print("✅ ВСЕ КОМПОНЕНТЫ ИНИЦИАЛИЗИРОВАНЫ")
 print("=" * 60)
-
-# ================ ФУНКЦИЯ УСТАНОВКИ ВЕБХУКА ================
-def setup_webhook_on_startup():
-    """Установка вебхука при запуске приложения"""
-    try:
-        # Даём время Railway на запуск
-        import time
-        time.sleep(2)
-        
-        domain = os.environ.get('RAILWAY_PUBLIC_DOMAIN', 'secretsanta-bot2-production.up.railway.app')
-        webhook_url = f"https://{domain}/webhook"
-        
-        print(f"🌐 Устанавливаю вебхук: {webhook_url}")
-        
-        # Удаляем старый вебхук и устанавливаем новый
-        bot.remove_webhook()
-        time.sleep(1)
-        bot.set_webhook(url=webhook_url)
-        
-        print("✅ Вебхук установлен!")
-        return True
-    except Exception as e:
-        print(f"⚠️ Не удалось установить вебхук: {e}")
-        print("ℹ️ Будет использован polling режим")
-        return False
 
 # ================ ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ DATABASE ================
 def get_player_by_name(self, full_name):
@@ -146,8 +114,6 @@ def main(message):
 
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callbacks(call):
-    print(f"DEBUG: Получен callback: {call.data}")
-
     if call.data == 'rules':
         markup = types.InlineKeyboardMarkup()
         btn_yes = types.InlineKeyboardButton('Да✅', callback_data='yes')
@@ -167,7 +133,6 @@ def handle_callbacks(call):
         bot.send_message(call.message.chat.id, 'Жаль, что вы не готовы. Возвращайтесь! 🎅')
 
     elif call.data == 'add_wish':
-        print("DEBUG: Обработка add_wish")
         msg = bot.send_message(call.message.chat.id,
                                '🎁 *Напиши свои пожелания для подарка:*\n\n'
                                '• Любимые цвета, хобби\n'
@@ -179,7 +144,6 @@ def handle_callbacks(call):
         bot.register_next_step_handler(msg, save_wishlist)
 
     elif call.data == 'skip_wish':
-        print("DEBUG: Обработка skip_wish")
         bot.send_message(call.message.chat.id,
                          'Хорошо! Твой Санта проявит креативность! 🎅\n\n'
                          f'*Жеребьёвка:* {config.DRAW_DAY}.{config.DRAW_MONTH}.{config.DRAW_YEAR}\n'
@@ -220,8 +184,6 @@ def get_name(message):
     user_id = message.from_user.id
     username = message.from_user.username
     telegram_name = message.from_user.first_name
-
-    print(f"Пользователь (ID: {user_id}, @{username}) ввел имя: {name}")
 
     if db.add_player(user_id, username, name, telegram_name):
         markup = types.InlineKeyboardMarkup()
@@ -507,30 +469,23 @@ def webhook():
 def setup_webhook_route():
     """Ручная установка вебхука"""
     try:
-        success = setup_webhook_on_startup()
-        if success:
-            return "✅ Вебхук установлен!"
-        else:
-            return "❌ Не удалось установить вебхук"
+        import time
+        domain = os.environ.get('RAILWAY_PUBLIC_DOMAIN', 'secretsanta-bot2-production.up.railway.app')
+        webhook_url = f"https://{domain}/webhook"
+        
+        print(f"🌐 Устанавливаю вебхук: {webhook_url}")
+        
+        bot.remove_webhook()
+        time.sleep(1)
+        bot.set_webhook(url=webhook_url)
+        
+        return "✅ Вебхук установлен!"
     except Exception as e:
         return f"❌ Ошибка: {e}"
 
-# ================ ЗАПУСК ПРИЛОЖЕНИЯ ================
+# ================ ЭКСПОРТ КОМПОНЕНТОВ ================
 # Этот код выполнится при импорте модуля
-
-print("🔄 Устанавливаю вебхук...")
-webhook_success = setup_webhook_on_startup()
-
-# print("🔄 Запускаю фоновую проверку дат...")
-# try:
-#     start_background_check(bot)
-#     print("✅ Фоновая проверка запущена")
-# except Exception as e:
-#     print(f"⚠️ Не удалось запустить фоновую проверку: {e}")
-
-print("=" * 60)
-print("🎅 ТАЙНЫЙ САНТА ГОТОВ К РАБОТЕ!")
-print("=" * 60)
+print("✅ main.py загружен успешно")
 
 # Экспортируем для использования в других файлах
 # from main import app, bot, db
