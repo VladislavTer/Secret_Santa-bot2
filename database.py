@@ -174,9 +174,22 @@ class Database:
         print("🗃️  Создание/проверка таблиц...")
         
         if self.db_type == 'postgresql':
-            # PostgreSQL таблицы
+            # Сначала удаляем старые таблицы если они есть (для чистого старта)
+            print("🧹 Очистка старых таблиц...")
+            try:
+                self._execute_query('DROP TABLE IF EXISTS revealed_pairs CASCADE')
+                self._execute_query('DROP TABLE IF EXISTS santa_pairs CASCADE')
+                self._execute_query('DROP TABLE IF EXISTS players CASCADE')
+                print("✅ Старые таблицы удалены")
+            except Exception as e:
+                print(f"⚠️  Не удалось удалить таблицы: {e}")
+            
+            # Создаем таблицы с правильными constraints
+            print("🔄 Создание новых таблиц...")
+            
+            # Таблица players С UNIQUE constraint
             self._execute_query('''
-                CREATE TABLE IF NOT EXISTS players (
+                CREATE TABLE players (
                     id SERIAL PRIMARY KEY,
                     user_id BIGINT UNIQUE NOT NULL,
                     username TEXT,
@@ -187,34 +200,39 @@ class Database:
                     is_active BOOLEAN DEFAULT TRUE
                 )
             ''')
+            print("✅ Таблица 'players' создана с UNIQUE constraint на user_id")
             
+            # Таблица santa_pairs
             self._execute_query('''
-                CREATE TABLE IF NOT EXISTS santa_pairs (
+                CREATE TABLE santa_pairs (
                     id SERIAL PRIMARY KEY,
-                    santa_user_id BIGINT NOT NULL,
-                    receiver_user_id BIGINT NOT NULL,
+                    santa_user_id BIGINT NOT NULL REFERENCES players(user_id),
+                    receiver_user_id BIGINT NOT NULL REFERENCES players(user_id),
                     year INTEGER DEFAULT 2025,
                     is_notified BOOLEAN DEFAULT FALSE,
                     assignment_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(santa_user_id, year)
                 )
             ''')
+            print("✅ Таблица 'santa_pairs' создана")
             
+            # Таблица revealed_pairs
             self._execute_query('''
-                CREATE TABLE IF NOT EXISTS revealed_pairs (
+                CREATE TABLE revealed_pairs (
                     id SERIAL PRIMARY KEY,
-                    santa_user_id BIGINT NOT NULL,
-                    receiver_user_id BIGINT NOT NULL,
+                    santa_user_id BIGINT NOT NULL REFERENCES players(user_id),
+                    receiver_user_id BIGINT NOT NULL REFERENCES players(user_id),
                     year INTEGER DEFAULT 2025,
                     revealed_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     revealed_by_admin BOOLEAN DEFAULT FALSE
                 )
             ''')
+            print("✅ Таблица 'revealed_pairs' создана")
             
-            print("✅ PostgreSQL таблицы проверены/созданы")
+            print("✅ Все PostgreSQL таблицы созданы с правильными constraints")
             
         else:
-            # SQLite таблицы
+            # SQLite таблицы (оставляем для локальной разработки)
             self._execute_query('''
                 CREATE TABLE IF NOT EXISTS players (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -254,15 +272,23 @@ class Database:
             print("✅ SQLite таблицы проверены/созданы")
 
     # === МЕТОДЫ ДЛЯ РАБОТЫ С ИГРОКАМИ ===
+    # 🔍 МЕТОД add_player НАХОДИТСЯ ЗДЕСЬ (строка ~175)
 
     def add_player(self, user_id, username, full_name, telegram_name=None, wish_list=None):
         """Добавление или обновление игрока."""
         try:
             print(f"📝 Добавление игрока: {full_name} (ID: {user_id})")
             
+            # Обработка None значений
+            username = username if username else ''
+            telegram_name = telegram_name if telegram_name else ''
+            wish_list = wish_list if wish_list else ''
+            
             if self.db_type == 'postgresql':
+                # УНИВЕРСАЛЬНЫЙ МЕТОД ДЛЯ POSTGRESQL
                 query = '''
-                    INSERT INTO players (user_id, username, full_name, telegram_name, wish_list, is_active)
+                    INSERT INTO players 
+                    (user_id, username, full_name, telegram_name, wish_list, is_active)
                     VALUES (%s, %s, %s, %s, %s, TRUE)
                     ON CONFLICT (user_id) DO UPDATE SET
                         username = EXCLUDED.username,
@@ -270,32 +296,25 @@ class Database:
                         telegram_name = EXCLUDED.telegram_name,
                         wish_list = EXCLUDED.wish_list,
                         is_active = TRUE
-                    RETURNING id
                 '''
-                result = self._execute_query(query, (user_id, username, full_name, telegram_name, wish_list))
-                
-                # Для PostgreSQL возвращаем ID
-                conn = self.get_connection()
-                cursor = conn.cursor()
-                cursor.execute(query, (user_id, username, full_name, telegram_name, wish_list))
-                player_id = cursor.fetchone()['id']
-                conn.commit()
-                conn.close()
+                self._execute_query(query, (user_id, username, full_name, telegram_name, wish_list))
+                print(f"✅ Игрок добавлен/обновлен: {full_name}")
                 
             else:
+                # SQLite версия
                 query = '''
                     INSERT OR REPLACE INTO players
                     (user_id, username, full_name, telegram_name, wish_list, is_active)
                     VALUES (?, ?, ?, ?, ?, 1)
                 '''
                 self._execute_query(query, (user_id, username, full_name, telegram_name, wish_list))
-                player_id = user_id  # Для SQLite просто возвращаем user_id
+                print(f"✅ Игрок добавлен/обновлен: {full_name}")
             
-            print(f"✅ Игрок добавлен/обновлен: {full_name}")
             return True
             
         except Exception as e:
             print(f"❌ Ошибка при добавлении игрока: {e}")
+            print(f"   Параметры: user_id={user_id}, username={username}, full_name={full_name}")
             return False
 
     def get_player(self, user_id):
@@ -631,3 +650,40 @@ class Database:
         except Exception as e:
             print(f"❌ Ошибка тестирования подключения: {e}")
             return False
+
+    def check_table_constraints(self):
+        """Проверить constraints таблиц."""
+        if self.db_type != 'postgresql':
+            print("⚠️ Эта функция только для PostgreSQL")
+            return
+        
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # Проверяем constraints таблицы players
+            cursor.execute('''
+                SELECT 
+                    tc.table_name, 
+                    kcu.column_name, 
+                    ccu.constraint_name,
+                    tc.constraint_type
+                FROM information_schema.table_constraints AS tc
+                JOIN information_schema.key_column_usage AS kcu
+                    ON tc.constraint_name = kcu.constraint_name
+                    AND tc.table_schema = kcu.table_schema
+                WHERE tc.table_name = 'players'
+                ORDER BY tc.constraint_type, kcu.column_name;
+            ''')
+            
+            constraints = cursor.fetchall()
+            print("🔍 Constraints таблицы 'players':")
+            for const in constraints:
+                print(f"   - {const['constraint_name']}: {const['constraint_type']} на {const['column_name']}")
+            
+            cursor.close()
+            conn.close()
+            return constraints
+        except Exception as e:
+            print(f"❌ Ошибка проверки constraints: {e}")
+            return None
