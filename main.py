@@ -535,12 +535,12 @@ def start_polling():
     print("✅ Команды должны работать: /start, /admin, etc.")
     
     try:
-        bot.infinity_polling(
-            timeout=60, 
-            long_polling_timeout=60,
-            restart_on_change=True,
-            logger_level='INFO'
-        )
+       bot.infinity_polling(
+        timeout=60, 
+        long_polling_timeout=60,
+        # restart_on_change=True,  # Закомментировано или удалено
+        logger_level='INFO'
+    )
     except Exception as e:
         print(f"❌ Ошибка polling: {e}")
         # Пробуем перезапустить через 10 секунд
