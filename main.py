@@ -6,6 +6,7 @@ import config
 from database import Database
 from flask import Flask, request
 import time
+import logging
 
 # ================ ИНИЦИАЛИЗАЦИЯ ================
 print("=" * 60)
@@ -499,5 +500,5 @@ if __name__ == '__main__':
     bot.infinity_polling(
         timeout=60, 
         long_polling_timeout=60,
-        logger_level='INFO'
+        logger_level=logging.INFO  # <-- ИСПРАВЛЕНО
     )
