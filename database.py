@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Optional, List, Tuple, Dict, Any
 
 # Настройка логгера
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class Database:
@@ -14,35 +15,83 @@ class Database:
         Инициализация базы данных.
         Автоматически определяет тип БД на основе доступных переменных окружения.
         """
+        print("=" * 60)
+        print("🔧 ИНИЦИАЛИЗАЦИЯ БАЗЫ ДАННЫХ")
+        print("=" * 60)
+        
+        # ВЫВОД ВСЕХ ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ДЛЯ ДЕБАГА
+        print("🔍 DEBUG: Переменные окружения:")
+        for key, value in os.environ.items():
+            if any(db_key in key.lower() for db_key in ['database', 'postgres', 'pg', 'railway']):
+                print(f"  {key}: {value[:50]}..." if len(value) > 50 else f"  {key}: {value}")
+        print("-" * 40)
+        
         self.db_type = self._detect_database_type()
         self._setup_connection()
         self.init_db()
-        logger.info(f"✅ База данных инициализирована. Тип: {self.db_type}")
+        
+        print(f"✅ База данных инициализирована. Тип: {self.db_type}")
+        if self.db_type == 'postgresql':
+            print(f"📦 Connection: {self.conn_string[:50]}..." if self.conn_string else "📦 Connection: установлено")
+        else:
+            print(f"📁 SQLite путь: {self.db_path}")
+        print("=" * 60)
 
     def _detect_database_type(self) -> str:
         """Определяет тип базы данных."""
-        database_url = os.getenv('DATABASE_URL')
+        # ПРОВЕРКА ВСЕХ ВОЗМОЖНЫХ ПЕРЕМЕННЫХ
+        possible_vars = [
+            'DATABASE_URL',
+            'RAILWAY_DATABASE_URL',
+            'POSTGRESQL_URL',
+            'PG_CONNECTION_STRING',
+            'NEON_DATABASE_URL',
+        ]
         
-        if database_url and 'postgres' in database_url.lower():
-            logger.info("🔍 Обнаружена переменная DATABASE_URL, использую PostgreSQL")
+        for var in possible_vars:
+            value = os.getenv(var)
+            if value and ('postgres' in value.lower() or 'postgresql' in value.lower()):
+                print(f"✅ Обнаружена переменная {var}, использую PostgreSQL")
+                return 'postgresql'
+        
+        # ПРОВЕРКА ПО ОТДЕЛЬНЫМ ПАРАМЕТРАМ (для старого config.py)
+        db_host = os.getenv('DB_HOST')
+        db_name = os.getenv('DB_NAME')
+        db_user = os.getenv('DB_USER')
+        db_password = os.getenv('DB_PASSWORD')
+        
+        if all([db_host, db_name, db_user, db_password]):
+            print("✅ Обнаружены параметры БД в config, использую PostgreSQL")
             return 'postgresql'
-        else:
-            logger.info("🔍 Переменная DATABASE_URL не найдена, использую SQLite")
-            return 'sqlite'
+        
+        print("⚠️ PostgreSQL переменные не найдены, использую SQLite")
+        return 'sqlite'
 
     def _setup_connection(self):
         """Настраивает параметры подключения."""
         if self.db_type == 'postgresql':
+            # Пытаемся получить DATABASE_URL из окружения
             self.conn_string = os.getenv('DATABASE_URL')
+            
+            # Если нет DATABASE_URL, собираем из отдельных параметров
             if not self.conn_string:
-                raise ValueError("❌ DATABASE_URL не найден для PostgreSQL")
+                db_host = os.getenv('DB_HOST', 'postgres.railway.internal')
+                db_name = os.getenv('DB_NAME', 'railway')
+                db_user = os.getenv('DB_USER', 'postgres')
+                db_password = os.getenv('DB_PASSWORD', '')
+                db_port = os.getenv('DB_PORT', '5432')
+                
+                self.conn_string = f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+                print(f"🔗 Собран DATABASE_URL из параметров")
+            
+            if not self.conn_string:
+                raise ValueError("❌ Не удалось определить строку подключения PostgreSQL")
+                
         else:
-            # SQLite - определяем путь к файлу
+            # SQLite
             if os.getenv('RAILWAY_ENVIRONMENT'):
-                # На Railway используем /tmp (сохраняется между перезапусками)
                 self.db_path = '/tmp/secret_santa.db'
             else:
-                # Локальная разработка
                 self.db_path = 'secret_santa.db'
             
             logger.info(f"📁 Путь к SQLite базе: {self.db_path}")
@@ -53,19 +102,29 @@ class Database:
             if self.db_type == 'postgresql':
                 import psycopg2
                 from psycopg2.extras import RealDictCursor
+                
                 # Для Railway PostgreSQL важно использовать sslmode=require
-                conn = psycopg2.connect(self.conn_string, sslmode='require')
-                # Для удобства работы с результатами как со словарями
+                try:
+                    conn = psycopg2.connect(self.conn_string, sslmode='require')
+                except:
+                    # Пробуем без sslmode для совместимости
+                    conn = psycopg2.connect(self.conn_string)
+                
+                conn.autocommit = True
                 conn.cursor_factory = RealDictCursor
+                return conn
+                
             else:
                 import sqlite3
                 conn = sqlite3.connect(self.db_path)
-                # Для совместимости с PostgreSQL, используем row_factory
                 conn.row_factory = sqlite3.Row
-            
-            return conn
+                return conn
+                
         except Exception as e:
-            logger.error(f"❌ Ошибка подключения к БД ({self.db_type}): {e}")
+            error_msg = f"❌ Ошибка подключения к БД ({self.db_type}): {e}"
+            if self.db_type == 'postgresql':
+                error_msg += f"\n📦 Connection string: {self.conn_string[:50]}..."
+            print(error_msg)
             raise
 
     def _execute_query(self, query: str, params: tuple = None, 
@@ -92,22 +151,16 @@ class Database:
             result = None
             if fetchone:
                 result = cursor.fetchone()
-                # Преобразуем результат в словарь для единообразия
-                if result and self.db_type == 'sqlite':
-                    result = dict(result)
             elif fetchall:
                 result = cursor.fetchall()
-                # Преобразуем результат в список словарей
-                if result and self.db_type == 'sqlite':
-                    result = [dict(row) for row in result]
             else:
-                result = cursor.rowcount
                 conn.commit()
+                result = cursor.rowcount
             
             return result
         except Exception as e:
             logger.error(f"❌ Ошибка SQL: {e}")
-            logger.error(f"📝 Запрос: {query}")
+            logger.error(f"📝 Запрос: {query[:100]}...")
             if params:
                 logger.error(f"📌 Параметры: {params}")
             conn.rollback()
@@ -118,6 +171,8 @@ class Database:
 
     def init_db(self):
         """Инициализирует таблицы в базе данных."""
+        print("🗃️  Создание/проверка таблиц...")
+        
         if self.db_type == 'postgresql':
             # PostgreSQL таблицы
             self._execute_query('''
@@ -155,8 +210,11 @@ class Database:
                     revealed_by_admin BOOLEAN DEFAULT FALSE
                 )
             ''')
+            
+            print("✅ PostgreSQL таблицы проверены/созданы")
+            
         else:
-            # SQLite таблицы (сохраняем для обратной совместимости)
+            # SQLite таблицы
             self._execute_query('''
                 CREATE TABLE IF NOT EXISTS players (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -177,7 +235,7 @@ class Database:
                     receiver_user_id INTEGER NOT NULL,
                     year INTEGER DEFAULT 2025,
                     is_notified BOOLEAN DEFAULT 0,
-                    assignment_date TIMESTAMP,
+                    assignment_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(santa_user_id, year)
                 )
             ''')
@@ -192,14 +250,16 @@ class Database:
                     revealed_by_admin BOOLEAN DEFAULT 0
                 )
             ''')
-        
-        logger.info("✅ Таблицы базы данных проверены/созданы.")
+            
+            print("✅ SQLite таблицы проверены/созданы")
 
     # === МЕТОДЫ ДЛЯ РАБОТЫ С ИГРОКАМИ ===
 
     def add_player(self, user_id, username, full_name, telegram_name=None, wish_list=None):
         """Добавление или обновление игрока."""
         try:
+            print(f"📝 Добавление игрока: {full_name} (ID: {user_id})")
+            
             if self.db_type == 'postgresql':
                 query = '''
                     INSERT INTO players (user_id, username, full_name, telegram_name, wish_list, is_active)
@@ -210,26 +270,43 @@ class Database:
                         telegram_name = EXCLUDED.telegram_name,
                         wish_list = EXCLUDED.wish_list,
                         is_active = TRUE
+                    RETURNING id
                 '''
+                result = self._execute_query(query, (user_id, username, full_name, telegram_name, wish_list))
+                
+                # Для PostgreSQL возвращаем ID
+                conn = self.get_connection()
+                cursor = conn.cursor()
+                cursor.execute(query, (user_id, username, full_name, telegram_name, wish_list))
+                player_id = cursor.fetchone()['id']
+                conn.commit()
+                conn.close()
+                
             else:
                 query = '''
                     INSERT OR REPLACE INTO players
                     (user_id, username, full_name, telegram_name, wish_list, is_active)
                     VALUES (?, ?, ?, ?, ?, 1)
                 '''
+                self._execute_query(query, (user_id, username, full_name, telegram_name, wish_list))
+                player_id = user_id  # Для SQLite просто возвращаем user_id
             
-            self._execute_query(query, (user_id, username, full_name, telegram_name, wish_list))
-            logger.info(f"✅ Игрок добавлен/обновлен: {full_name} (@{username})")
+            print(f"✅ Игрок добавлен/обновлен: {full_name}")
             return True
+            
         except Exception as e:
-            logger.error(f"❌ Ошибка при добавлении игрока: {e}")
+            print(f"❌ Ошибка при добавлении игрока: {e}")
             return False
 
     def get_player(self, user_id):
         """Получение информации об игроке по ID."""
         query = 'SELECT * FROM players WHERE user_id = ?'
-        result = self._execute_query(query, (user_id,), fetchone=True)
-        return result
+        try:
+            result = self._execute_query(query, (user_id,), fetchone=True)
+            return result
+        except Exception as e:
+            print(f"❌ Ошибка получения игрока {user_id}: {e}")
+            return None
 
     def get_all_active_players(self):
         """Получение списка всех активных игроков."""
@@ -248,11 +325,14 @@ class Database:
                 ORDER BY full_name
             '''
         
-        result = self._execute_query(query, fetchall=True)
-        # Конвертируем в список кортежей для обратной совместимости
-        if result and isinstance(result[0], dict):
-            return [(row['user_id'], row['full_name'], row['username']) for row in result]
-        return result
+        try:
+            result = self._execute_query(query, fetchall=True)
+            if result and isinstance(result[0], dict):
+                return [(row['user_id'], row['full_name'], row['username']) for row in result]
+            return result or []
+        except Exception as e:
+            print(f"❌ Ошибка получения игроков: {e}")
+            return []
 
     def get_player_by_name(self, full_name):
         """Поиск игрока по полному имени."""
@@ -263,50 +343,59 @@ class Database:
 
     def perform_draw(self, year=2025):
         """Проведение жеребьёвки."""
-        # Проверяем, не проводилась ли уже жеребьёвка
-        query = 'SELECT COUNT(*) as count FROM santa_pairs WHERE year = ?'
-        result = self._execute_query(query, (year,), fetchone=True)
-        
-        if result and result['count'] > 0:
-            logger.warning(f"⚠️ Жеребьёвка уже проводилась в {year} году!")
-            return False
+        try:
+            print(f"🎅 Проведение жеребьёвки для {year} года...")
+            
+            # Проверяем, не проводилась ли уже жеребьёвка
+            query = 'SELECT COUNT(*) as count FROM santa_pairs WHERE year = ?'
+            result = self._execute_query(query, (year,), fetchone=True)
+            
+            if result and result['count'] > 0:
+                print(f"⚠️ Жеребьёвка уже проводилась в {year} году!")
+                return False
 
-        # Получаем активных игроков
-        players = self.get_all_active_players()
-        player_ids = [player[0] for player in players]
+            # Получаем активных игроков
+            players = self.get_all_active_players()
+            player_ids = [player[0] for player in players]
 
-        if len(player_ids) < 2:
-            logger.warning("⚠️ Недостаточно игроков для жеребьёвки!")
-            return False
+            if len(player_ids) < 2:
+                print("⚠️ Недостаточно игроков для жеребьёвки!")
+                return False
 
-        # Алгоритм жеребьёвки
-        receivers = player_ids.copy()
-        random.shuffle(receivers)
-
-        attempts = 0
-        while any(santa == receiver for santa, receiver in zip(player_ids, receivers)) and attempts < 100:
+            # Алгоритм жеребьёвки
+            receivers = player_ids.copy()
             random.shuffle(receivers)
-            attempts += 1
 
-        if attempts >= 100:
-            logger.error("❌ Не удалось создать уникальные пары!")
+            attempts = 0
+            while any(santa == receiver for santa, receiver in zip(player_ids, receivers)) and attempts < 100:
+                random.shuffle(receivers)
+                attempts += 1
+
+            if attempts >= 100:
+                print("❌ Не удалось создать уникальные пары!")
+                return False
+
+            # Создаем пары
+            pairs_count = 0
+            for santa_id, receiver_id in zip(player_ids, receivers):
+                if self.db_type == 'postgresql':
+                    self._execute_query('''
+                        INSERT INTO santa_pairs (santa_user_id, receiver_user_id, year)
+                        VALUES (%s, %s, %s)
+                    ''', (santa_id, receiver_id, year))
+                else:
+                    self._execute_query('''
+                        INSERT INTO santa_pairs (santa_user_id, receiver_user_id, year)
+                        VALUES (?, ?, ?)
+                    ''', (santa_id, receiver_id, year))
+                pairs_count += 1
+
+            print(f"✅ Жеребьёвка проведена! Создано {pairs_count} пар.")
+            return True
+            
+        except Exception as e:
+            print(f"❌ Ошибка при проведении жеребьёвки: {e}")
             return False
-
-        # Создаем пары
-        for santa_id, receiver_id in zip(player_ids, receivers):
-            if self.db_type == 'postgresql':
-                self._execute_query('''
-                    INSERT INTO santa_pairs (santa_user_id, receiver_user_id, year)
-                    VALUES (%s, %s, %s)
-                ''', (santa_id, receiver_id, year))
-            else:
-                self._execute_query('''
-                    INSERT INTO santa_pairs (santa_user_id, receiver_user_id, year, assignment_date)
-                    VALUES (?, ?, ?, datetime('now'))
-                ''', (santa_id, receiver_id, year))
-
-        logger.info(f"🎅 Жеребьёвка проведена! Создано {len(player_ids)} пар.")
-        return True
 
     def get_santa_pair(self, user_id, year=2025):
         """Получить получателя для данного Санты."""
@@ -335,15 +424,11 @@ class Database:
     def reveal_pair(self, receiver_user_id, year=2025, by_admin=False):
         """Раскрыть пару: кто был Сантой для получателя."""
         try:
-            # Проверяем, не раскрыта ли уже пара
-            check_query = '''
-                SELECT id FROM revealed_pairs 
-                WHERE receiver_user_id = ? AND year = ?
-            '''
-            existing = self._execute_query(check_query, (receiver_user_id, year), fetchone=True)
+            print(f"🔓 Раскрытие пары для пользователя {receiver_user_id}...")
             
-            if existing:
-                logger.warning(f"⚠️ Пара для получателя {receiver_user_id} уже раскрыта")
+            # Проверяем, не раскрыта ли уже пара
+            if self.is_pair_revealed(receiver_user_id, year):
+                print(f"⚠️ Пара для получателя {receiver_user_id} уже раскрыта")
                 return self.get_receiver_pair(receiver_user_id, year)
 
             # Получаем информацию о паре
@@ -355,7 +440,7 @@ class Database:
             pair = self._execute_query(pair_query, (receiver_user_id, year), fetchone=True)
             
             if not pair:
-                logger.error(f"❌ Пара для получателя {receiver_user_id} не найдена")
+                print(f"❌ Пара для получателя {receiver_user_id} не найдена")
                 return None
 
             # Сохраняем в таблицу раскрытых пар
@@ -370,10 +455,13 @@ class Database:
 
             # Возвращаем имя Санты
             santa = self.get_player(pair['santa_user_id'])
-            return santa['full_name'] if santa else None
-
+            santa_name = santa['full_name'] if santa else 'Неизвестно'
+            
+            print(f"✅ Пара раскрыта: Санта {santa_name} → Получатель {receiver_user_id}")
+            return santa_name
+            
         except Exception as e:
-            logger.error(f"❌ Ошибка при раскрытии пары: {e}")
+            print(f"❌ Ошибка при раскрытии пары: {e}")
             return None
 
     def get_all_pairs_to_reveal(self, year=2025):
@@ -393,31 +481,25 @@ class Database:
             ORDER BY santa.full_name
         '''
         result = self._execute_query(query, (year,), fetchall=True)
-        # Конвертируем для обратной совместимости
+        
         if result and isinstance(result[0], dict):
             return [(row['santa_user_id'], row['receiver_user_id'], 
                      row['santa_name'], row['receiver_name']) for row in result]
-        return result
+        return result or []
 
     def reveal_all_pairs(self, year=2025, by_admin=False):
         """Раскрыть все пары сразу."""
         try:
+            print(f"🔓 Раскрытие всех пар для {year} года...")
             pairs = self.get_all_pairs_to_reveal(year)
             
             if not pairs:
-                logger.info("ℹ️ Нет пар для раскрытия")
+                print("ℹ️ Нет пар для раскрытия")
                 return 0
 
             revealed_count = 0
             for santa_id, receiver_id, santa_name, receiver_name in pairs:
-                # Проверяем, не раскрыта ли уже эта пара
-                check_query = '''
-                    SELECT id FROM revealed_pairs 
-                    WHERE receiver_user_id = ? AND year = ?
-                '''
-                existing = self._execute_query(check_query, (receiver_id, year), fetchone=True)
-                
-                if not existing:
+                if not self.is_pair_revealed(receiver_id, year):
                     insert_query = '''
                         INSERT INTO revealed_pairs 
                         (santa_user_id, receiver_user_id, year, revealed_by_admin)
@@ -429,11 +511,11 @@ class Database:
                     self._execute_query(insert_query, (santa_id, receiver_id, year, by_admin))
                     revealed_count += 1
 
-            logger.info(f"✅ Раскрыто {revealed_count} пар")
+            print(f"✅ Раскрыто {revealed_count} пар")
             return revealed_count
 
         except Exception as e:
-            logger.error(f"❌ Ошибка при раскрытии всех пар: {e}")
+            print(f"❌ Ошибка при раскрытии всех пар: {e}")
             return 0
 
     def is_pair_revealed(self, receiver_user_id, year=2025):
@@ -450,28 +532,31 @@ class Database:
     def get_player_stats(self):
         """Получить статистику по игрокам."""
         try:
-            total_players = self._execute_query(
+            total_players_result = self._execute_query(
                 'SELECT COUNT(*) as count FROM players', 
                 fetchone=True
-            )['count']
+            )
+            total_players = total_players_result['count'] if total_players_result else 0
             
-            total_pairs = self._execute_query(
+            total_pairs_result = self._execute_query(
                 'SELECT COUNT(*) as count FROM santa_pairs WHERE year = 2025', 
                 fetchone=True
-            )['count']
+            )
+            total_pairs = total_pairs_result['count'] if total_pairs_result else 0
             
-            total_revealed = self._execute_query(
+            total_revealed_result = self._execute_query(
                 'SELECT COUNT(*) as count FROM revealed_pairs WHERE year = 2025', 
                 fetchone=True
-            )['count']
+            )
+            total_revealed = total_revealed_result['count'] if total_revealed_result else 0
 
             return {
-                'total_players': total_players or 0,
-                'total_pairs': total_pairs or 0,
-                'total_revealed': total_revealed or 0
+                'total_players': total_players,
+                'total_pairs': total_pairs,
+                'total_revealed': total_revealed
             }
         except Exception as e:
-            logger.error(f"❌ Ошибка при получении статистики: {e}")
+            print(f"❌ Ошибка при получении статистики: {e}")
             return {'total_players': 0, 'total_pairs': 0, 'total_revealed': 0}
 
     def mark_as_notified(self, user_id, year=2025):
@@ -511,10 +596,9 @@ class Database:
             '''
         
         result = self._execute_query(query, (year,), fetchall=True)
-        # Конвертируем для обратной совместимости
         if result and isinstance(result[0], dict):
             return [(row['santa_user_id'], row['full_name']) for row in result]
-        return result
+        return result or []
 
     def get_all_players_with_wishlists(self):
         """Получить всех игроков с их wishlist."""
@@ -524,4 +608,26 @@ class Database:
             WHERE is_active = TRUE AND wish_list IS NOT NULL AND wish_list != ''
             ORDER BY full_name
         '''
-        return self._execute_query(query, fetchall=True)
+        return self._execute_query(query, fetchall=True) or []
+
+    def test_connection(self):
+        """Тест подключения к базе данных."""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            if self.db_type == 'postgresql':
+                cursor.execute("SELECT version();")
+                version = cursor.fetchone()['version']
+                print(f"✅ PostgreSQL подключена. Версия: {version}")
+            else:
+                cursor.execute("SELECT sqlite_version();")
+                version = cursor.fetchone()[0]
+                print(f"✅ SQLite подключена. Версия: {version}")
+            
+            cursor.close()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"❌ Ошибка тестирования подключения: {e}")
+            return False
