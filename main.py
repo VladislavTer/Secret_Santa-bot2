@@ -597,26 +597,34 @@ def handle_admin_callback(call):
         print(f"[DEBUG] Обработка admin callback: {call.data}")
         
         if call.data == 'admin_draw':
-            # Спросим подтверждение
+            # Показываем подтверждение
             confirm_markup = types.InlineKeyboardMarkup()
             confirm_markup.add(
                 types.InlineKeyboardButton('✅ Да, провести жеребьёвку', callback_data='admin_confirm_draw'),
                 types.InlineKeyboardButton('❌ Нет, отмена', callback_data='admin_cancel')
             )
             bot.send_message(call.message.chat.id,
-                             "⚠️ *Внимание!*\n\nВы собираетесь провести жеребьёвку. "
-                             "После этого всем игрокам будут назначены их подопечные.\n\n"
-                             "Это действие нельзя отменить!\n\n"
-                             "Продолжить?",
-                             parse_mode='Markdown', reply_markup=confirm_markup)
-        
+                     "⚠️ *Внимание!*\n\nВы собираетесь провести жеребьёвку. "
+                     "После этого всем игрокам будут назначены их подопечные.\n\n"
+                     "Это действие нельзя отменить!\n\n"
+                     "Продолжить?",
+                     parse_mode='Markdown', reply_markup=confirm_markup)
+
         elif call.data == 'admin_confirm_draw':
-            # Проводим жеребьёвку с уведомлениями
-            if db.perform_draw(config.DRAW_YEAR, bot=bot):
-                bot.send_message(call.message.chat.id, 
-                                 "✅ *Жеребьёвка проведена успешно!*\n\n"
-                                 "Все игроки получили уведомления о своих подопечных.",
-                                 parse_mode='Markdown')
+            # Проводим жеребьёвку (БЕЗ параметра bot)
+            if db.perform_draw(config.DRAW_YEAR):
+                bot.send_message(call.message.chat.id, "✅ Жеребьёвка проведена успешно!")
+                
+                # Отправляем уведомления через отдельную функцию
+                try:
+                    from utils import notify_all_players
+                    notified_count = notify_all_players(bot, db, config.DRAW_YEAR)
+                    bot.send_message(call.message.chat.id, 
+                                   f"📨 Уведомления отправлены! ({notified_count} игроков)")
+                except Exception as e:
+                    print(f"⚠️ Ошибка отправки уведомлений: {e}")
+                    bot.send_message(call.message.chat.id, 
+                                   "✅ Жеребьёвка проведена, но возникла ошибка при отправке уведомлений.")
             else:
                 bot.send_message(call.message.chat.id, "❌ Ошибка при проведении жеребьёвки!")
 
