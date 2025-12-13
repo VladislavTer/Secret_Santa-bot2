@@ -148,17 +148,271 @@ def admin_panel(message):
                     reply_markup=markup,
                     parse_mode='Markdown')
 
-# Добавь другие команды для тестирования
-@bot.message_handler(commands=['help', 'status', 'myid'])
-def test_commands(message):
-    command = message.text
-    print(f"[DEBUG] Получена команда {command} от {message.from_user.id}")
-    bot.send_message(message.chat.id, f"✅ Команда {command} получена! Бот работает.")
+# ================ КОМАНДЫ ДЛЯ ИГРОКОВ ================
 
-@bot.message_handler(func=lambda message: True)
-def echo_all(message):
-    print(f"[DEBUG] Получено сообщение: '{message.text}' от {message.from_user.id}")
-    bot.reply_to(message, f"Вы написали: {message.text}")
+@bot.message_handler(commands=['status'])
+def status_command(message):
+    """Показать статус игрока"""
+    user_id = message.from_user.id
+    print(f"[DEBUG] Команда /status от {user_id}")
+    
+    player = db.get_player(user_id)
+    
+    if not player:
+        bot.send_message(message.chat.id, 
+                        "❌ Вы не зарегистрированы в игре.\nИспользуйте /start для регистрации.")
+        return
+    
+    # Получаем данные игрока
+    full_name = player[3] if len(player) > 3 else 'Неизвестно'
+    username = player[2] if len(player) > 2 and player[2] else 'не указан'
+    reg_date = player[6] if len(player) > 6 else 'неизвестно'
+    wish_list = player[5] if len(player) > 5 and player[5] else 'еще не добавлен'
+    
+    # Проверяем, назначен ли получатель
+    receiver_info = ""
+    try:
+        # Пробуем получить получателя через santa_pairs
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT p.full_name, p.wish_list 
+            FROM santa_pairs sp 
+            JOIN players p ON sp.receiver_user_id = p.user_id 
+            WHERE sp.santa_user_id = ? AND sp.year = ?
+        ''', (user_id, config.DRAW_YEAR))
+        receiver = cursor.fetchone()
+        conn.close()
+        
+        if receiver:
+            receiver_name = receiver[0] if receiver[0] else 'Неизвестно'
+            receiver_wishlist = receiver[1] if len(receiver) > 1 and receiver[1] else 'нет пожеланий'
+            has_wishlist = "🎁" if receiver_wishlist and receiver_wishlist != 'нет пожеланий' else "📝"
+            
+            receiver_info = f"""🎅 *Твой подопечный:*
+• *Имя:* {receiver_name}
+• *Пожелания:* {has_wishlist} {'есть' if receiver_wishlist and receiver_wishlist != 'нет пожеланий' else 'нет'}
+"""
+        else:
+            receiver_info = "🎅 *Твой подопечный:* пока не назначен\n"
+    except Exception as e:
+        print(f"[DEBUG] Ошибка получения получателя: {e}")
+        receiver_info = "🎅 *Твой подопечный:* информация пока недоступна\n"
+    
+    # Проверяем, есть ли у нас Санта (раскрыт ли он)
+    santa_info = ""
+    try:
+        # Проверяем дату раскрытия
+        today = date.today()
+        reveal_date = date(REVEAL_YEAR, REVEAL_MONTH, REVEAL_DAY)
+        
+        if today >= reveal_date:
+            santa_name = db.get_receiver_pair(user_id, REVEAL_YEAR)
+            if santa_name:
+                santa_info = f"🎄 *Твой Тайный Санта:* {santa_name}\n"
+            else:
+                santa_info = "🎄 *Твой Тайный Санта:* еще не раскрыт\n"
+        else:
+            days_left = (reveal_date - today).days
+            santa_info = f"🎄 *Раскрытие через:* {days_left} дней\n"
+    except Exception as e:
+        print(f"[DEBUG] Ошибка получения Санты: {e}")
+        santa_info = "🎄 *Информация о Санте:* пока недоступна\n"
+    
+    status_text = f"""
+📋 *Твой статус в игре "Тайный Санта"*
+
+👤 *Личные данные:*
+• *Имя:* {full_name}
+• *Username:* @{username}
+• *ID:* `{user_id}`
+• *Дата регистрации:* {reg_date}
+
+{receiver_info}
+{santa_info}
+🎁 *Твой список пожеланий:* {'есть' if wish_list and wish_list != 'еще не добавлен' else 'нет'}
+
+📅 *Ближайшие события:*
+• *Жеребьёвка:* {config.DRAW_DAY}.{config.DRAW_MONTH}.{config.DRAW_YEAR}
+• *Раскрытие Сант:* {REVEAL_DAY}.{REVEAL_MONTH}.{REVEAL_YEAR}
+"""
+    
+    bot.send_message(message.chat.id, status_text, parse_mode='Markdown')
+
+@bot.message_handler(commands=['addwish'])
+def add_wish_command(message):
+    """Добавить список пожеланий"""
+    user_id = message.from_user.id
+    print(f"[DEBUG] Команда /addwish от {user_id}")
+    
+    player = db.get_player(user_id)
+    
+    if not player:
+        bot.send_message(message.chat.id, 
+                        "❌ Вы не зарегистрированы в игре.\nИспользуйте /start для регистрации.")
+        return
+    
+    # Отправляем сообщение с запросом пожеланий
+    msg = bot.send_message(message.chat.id,
+                         '🎁 *Напиши свои пожелания для подарка:*\n\n'
+                         '• Любимые цвета, хобби\n'
+                         '• Размер одежды (если нужно)\n'
+                         '• Что не нравится\n'
+                         '• Идеи для подарков\n\n'
+                         'Чем больше деталей - тем лучше!\n'
+                         'Или напиши "пропустить" чтобы оставить пустым.',
+                         parse_mode='Markdown')
+    
+    # Регистрируем следующий шаг
+    bot.register_next_step_handler(msg, process_wishlist)
+
+def process_wishlist(message):
+    """Обработка введенного списка пожеланий"""
+    user_id = message.from_user.id
+    wishlist = message.text
+    
+    if wishlist.lower() == 'пропустить':
+        wishlist = ''
+    
+    conn = db.get_connection()
+    cursor = conn.cursor()
+    cursor.execute('UPDATE players SET wish_list = ? WHERE user_id = ?', (wishlist, user_id))
+    conn.commit()
+    conn.close()
+    
+    if wishlist:
+        response = '✅ *Список пожеланий сохранен!*\n\nТвой Санта будет благодарен за подсказки! 🎁\n\nПосмотреть свой список можно командой /mywish'
+    else:
+        response = '✅ *Список пожеланий очищен.*\n\nТвой Санта проявит креативность! 🎅'
+    
+    bot.send_message(message.chat.id, response, parse_mode='Markdown')
+
+@bot.message_handler(commands=['mywish'])
+def my_wish_command(message):
+    """Посмотреть свой список пожеланий"""
+    user_id = message.from_user.id
+    print(f"[DEBUG] Команда /mywish от {user_id}")
+    
+    player = db.get_player(user_id)
+    
+    if not player:
+        bot.send_message(message.chat.id, 
+                        "❌ Вы не зарегистрированы в игре.\nИспользуйте /start для регистрации.")
+        return
+    
+    wish_list = player[5] if len(player) > 5 and player[5] else 'еще не добавлен'
+    
+    if wish_list and wish_list != 'еще не добавлен':
+        response = f"""
+🎁 *Твой список пожеланий:*
+
+{wish_list}
+
+*Используй команды:*
+/addwish - обновить список
+/status - посмотреть полный статус
+"""
+    else:
+        response = "📝 *У тебя еще нет списка пожеланий.*\n\nИспользуй команду /addwish чтобы добавить свои пожелания для Тайного Санты!"
+    
+    bot.send_message(message.chat.id, response, parse_mode='Markdown')
+
+@bot.message_handler(commands=['myid'])
+def my_id_command(message):
+    """Показать ID пользователя"""
+    user_id = message.from_user.id
+    print(f"[DEBUG] Команда /myid от {user_id}")
+    
+    bot.send_message(message.chat.id, 
+                    f"🆔 *Твой Telegram ID:* `{user_id}`\n\n"
+                    "Этот ID нужен для идентификации в игре.",
+                    parse_mode='Markdown')
+
+@bot.message_handler(commands=['help'])
+def help_command(message):
+    """Показать справку"""
+    user_id = message.from_user.id
+    print(f"[DEBUG] Команда /help от {user_id}")
+    
+    help_text = f"""
+🆘 *Помощь по командам бота*
+
+🎮 *Основные команды:*
+/start - начать игру, регистрация
+/status - посмотреть свой статус
+/addwish - добавить список пожеланий
+/mywish - посмотреть свой список пожеланий
+/myid - узнать свой Telegram ID
+/help - эта справка
+
+🎅 *Для игры:*
+/reveal - узнать своего Тайного Санту (после {REVEAL_DAY}.{REVEAL_MONTH}.{REVEAL_YEAR})
+
+🛠️ *Администратору:*
+/admin - панель администратора (только для админов)
+
+*Жеребьёвка:* {config.DRAW_DAY}.{config.DRAW_MONTH}.{config.DRAW_YEAR}
+*Раскрытие Сант:* {REVEAL_DAY}.{REVEAL_MONTH}.{REVEAL_YEAR}
+"""
+    
+    bot.send_message(message.chat.id, help_text, parse_mode='Markdown')
+
+@bot.message_handler(commands=['reveal'])
+def reveal_santa_command(message):
+    """Узнать своего Тайного Санту"""
+    user_id = message.from_user.id
+    print(f"[DEBUG] Команда /reveal от {user_id}")
+    
+    # Проверяем текущую дату
+    today = date.today()
+    reveal_date = date(REVEAL_YEAR, REVEAL_MONTH, REVEAL_DAY)
+    
+    if today < reveal_date:
+        bot.send_message(message.chat.id,
+                        f"🎅 *Тайна еще не раскрыта!*\n\n"
+                        f"Раскрытие Тайных Сант произойдет {REVEAL_DAY}.{REVEAL_MONTH}.{REVEAL_YEAR}\n"
+                        f"Осталось ждать: {(reveal_date - today).days} дней",
+                        parse_mode='Markdown')
+        return
+    
+    # Если дата наступила, пытаемся получить информацию о Санте
+    try:
+        santa_name = db.get_receiver_pair(user_id, REVEAL_YEAR)
+        if santa_name:
+            bot.send_message(message.chat.id,
+                           f"🎉 *Тайна раскрыта!*\n\n"
+                           f"Твоим Тайным Сантой был: *{santa_name}*!\n\n"
+                           f"Надеемся, тебе понравился подарок! 🎁",
+                           parse_mode='Markdown')
+        else:
+            bot.send_message(message.chat.id,
+                           "❌ *Информация не найдена*\n\n"
+                           "Возможно, жеребьёвка еще не проведена или произошла ошибка.\n"
+                           "Обратитесь к администратору.",
+                           parse_mode='Markdown')
+    except Exception as e:
+        print(f"[DEBUG] Ошибка в /reveal: {e}")
+        bot.send_message(message.chat.id,
+                        "❌ *Ошибка при получении информации*\n\n"
+                        "Попробуйте позже или обратитесь к администратору.",
+                        parse_mode='Markdown')
+
+# ================ ОБРАБОТЧИК НЕИЗВЕСТНЫХ КОМАНД ================
+
+@bot.message_handler(func=lambda message: True, content_types=['text'])
+def unknown_command(message):
+    """Обработчик неизвестных команд и простых сообщений"""
+    if message.text.startswith('/'):
+        # Это неизвестная команда
+        bot.send_message(message.chat.id,
+                        "❌ *Неизвестная команда*\n\n"
+                        "Используй /help чтобы увидеть список доступных команд.",
+                        parse_mode='Markdown')
+    else:
+        # Игнорируем обычные сообщения или показываем подсказку
+        pass
+
+# ================ CALLBACK ОБРАБОТЧИКИ ================
 
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callbacks(call):
