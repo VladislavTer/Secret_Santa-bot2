@@ -597,11 +597,26 @@ def handle_admin_callback(call):
         print(f"[DEBUG] Обработка admin callback: {call.data}")
         
         if call.data == 'admin_draw':
-            if db.perform_draw(config.DRAW_YEAR):
-                bot.send_message(call.message.chat.id, "✅ Жеребьёвка проведена успешно!")
-                from utils import notify_players_after_draw
-                notify_players_after_draw(bot, db)
-                bot.send_message(call.message.chat.id, "📨 Уведомления отправлены!")
+            # Спросим подтверждение
+            confirm_markup = types.InlineKeyboardMarkup()
+            confirm_markup.add(
+                types.InlineKeyboardButton('✅ Да, провести жеребьёвку', callback_data='admin_confirm_draw'),
+                types.InlineKeyboardButton('❌ Нет, отмена', callback_data='admin_cancel')
+            )
+            bot.send_message(call.message.chat.id,
+                             "⚠️ *Внимание!*\n\nВы собираетесь провести жеребьёвку. "
+                             "После этого всем игрокам будут назначены их подопечные.\n\n"
+                             "Это действие нельзя отменить!\n\n"
+                             "Продолжить?",
+                             parse_mode='Markdown', reply_markup=confirm_markup)
+        
+        elif call.data == 'admin_confirm_draw':
+            # Проводим жеребьёвку с уведомлениями
+            if db.perform_draw(config.DRAW_YEAR, bot=bot):
+                bot.send_message(call.message.chat.id, 
+                                 "✅ *Жеребьёвка проведена успешно!*\n\n"
+                                 "Все игроки получили уведомления о своих подопечных.",
+                                 parse_mode='Markdown')
             else:
                 bot.send_message(call.message.chat.id, "❌ Ошибка при проведении жеребьёвки!")
 
