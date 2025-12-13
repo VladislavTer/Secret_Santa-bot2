@@ -8,6 +8,15 @@ from flask import Flask, request
 import threading
 import time
 
+# Проверка зависимостей перед запуском
+try:
+    import watchdog
+    import psutil
+    print("✅ Зависимости watchdog и psutil загружены")
+except ImportError as e:
+    print(f"⚠️  Отсутствует зависимость: {e}")
+    print("⚠️  Установи: pip install watchdog psutil")
+
 # ================ ИНИЦИАЛИЗАЦИЯ ================
 print("=" * 60)
 print("🤖 ЗАГРУЗКА ТАЙНОГО САНТЫ")
