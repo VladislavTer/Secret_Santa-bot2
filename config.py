@@ -6,7 +6,7 @@ BOT_TOKEN = os.environ.get('BOT_TOKEN', '8425931021:AAFk0RDxPhzpUH30kJyFAjPEDMBx
 print(f"✅ BOT_TOKEN загружен: {BOT_TOKEN[:15]}...")
 
 # ID администраторов
-ADMIN_IDS = [1931547001]
+ADMINS = [1931547001]
 
 # Даты
 DRAW_YEAR = 2025
