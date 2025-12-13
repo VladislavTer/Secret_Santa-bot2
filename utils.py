@@ -9,6 +9,31 @@ REVEAL_YEAR = 2025
 REVEAL_MONTH = 12
 REVEAL_DAY = 31
 
+def safe_get_player_field(player, field_name, default_value=''):
+    """Безопасное получение поля игрока из dict или tuple"""
+    if not player:
+        return default_value
+    
+    if isinstance(player, dict):
+        return player.get(field_name, default_value)
+    else:
+        # Маппинг полей на индексы для tuple (старая SQLite версия)
+        field_map = {
+            'id': 0,
+            'user_id': 1,
+            'username': 2,
+            'full_name': 3,
+            'telegram_name': 4,
+            'wish_list': 5,
+            'registration_date': 6,
+            'is_active': 7
+        }
+        idx = field_map.get(field_name)
+        if idx is not None and len(player) > idx:
+            value = player[idx]
+            return value if value is not None else default_value
+        return default_value
+
 
 def check_draw_date(bot_instance):
     db = Database()
@@ -21,6 +46,7 @@ def check_draw_date(bot_instance):
         if today == draw_date:
             print("🎄 Наступила дата жеребьёвки!")
 
+            # ИСПРАВЛЕНО: убран параметр bot
             if db.perform_draw(config.DRAW_YEAR):
                 notify_players_after_draw(bot_instance, db)
 
@@ -47,49 +73,64 @@ def check_draw_date(bot_instance):
 
 
 def notify_players_after_draw(bot_instance, db):
-    pairs = db.get_unnotified_pairs(config.DRAW_YEAR)
+    """Уведомление игроков после жеребьёвки"""
+    try:
+        print("📨 Уведомление игроков после жеребьёвки...")
+        pairs = db.get_unnotified_pairs(config.DRAW_YEAR)
+        
+        if not pairs:
+            print("ℹ️ Нет неуведомленных пар")
+            return
+        
+        notified_count = 0
+        
+        for santa_id, receiver_name in pairs:
+            try:
+                player = db.get_player(santa_id)
+                # ИСПРАВЛЕНО: используем безопасный метод вместо player[3]
+                santa_name = safe_get_player_field(player, 'full_name', "Тайный Санта")
+                username = safe_get_player_field(player, 'username', '')
+                
+                # Получаем информацию о получателе
+                receiver_player = db.get_player_by_name(receiver_name)
+                wish_list = safe_get_player_field(receiver_player, 'wish_list', "")
+                
+                # Формируем сообщение
+                message = f"""
+🎅 *Дорогой {santa_name}!*
 
-    for santa_id, receiver_name in pairs:
-        try:
-            player = db.get_player(santa_id)
-            santa_name = player[3] if player and len(player) > 3 else "Тайный Санта"
+Жеребьёвка проведена!
 
-            # Получаем информацию о получателе (для виш-листа)
-            receiver_player = db.get_player_by_name(receiver_name)
-            wish_list = ""
+*Твой подопечный:* {receiver_name}
 
-            if receiver_player and len(receiver_player) > 5:
-                wish_list = receiver_player[5]  # wish_list находится на 5-й позиции (индекс 5)
+🎁 *Информация о подопечном:*
+{f"📝 *Пожелания:* {wish_list}" if wish_list else "📝 *Пожелания не указаны*"}
 
-            message = f"🎅 Дорогой {santa_name}!\n\n"
-            message += f"Твой подопечный: *{receiver_name}*\n\n"
+📅 *Напоминание о датах:*
+• Дедлайн для подарков: до {config.GIFT_DEADLINE_DAY}.{config.GIFT_DEADLINE_MONTH}.{config.DRAW_YEAR}
+• Раскрытие Сант: {REVEAL_DAY}.{REVEAL_MONTH}.{REVEAL_YEAR}
 
-            # Добавляем виш-лист, если он есть
-            if wish_list:
-                message += "🎁 *Пожелания получателя:*\n"
-                message += f"{wish_list}\n\n"
-            else:
-                message += "🎁 У получателя нет списка пожеланий. Прояви креативность!\n\n"
+💰 *Бюджет подарка:* {config.GIFT_BUDGET}
 
-            message += "Теперь твоя задача:\n"
-            message += f"1. Придумай креативный подарок ({config.GIFT_BUDGET})\n"
-            message += "2. Узнай предпочтения получателя (можешь спросить у друзей)\n"
-            message += f"3. Подготовь подарок до {config.GIFT_DEADLINE_DAY}.{config.GIFT_DEADLINE_MONTH}.{config.DRAW_YEAR}\n"
-            message += "4. Сохраняй анонимность!\n"
-            message += f"5. Раскрытие Сант: {REVEAL_DAY}.{REVEAL_MONTH}.{REVEAL_YEAR}\n\n"
-            message += "Удачи в подготовке сюрприза! 🎁"
+*Совет:* Прояви креативность! Узнай предпочтения получателя через друзей.
 
-            bot_instance.send_message(santa_id, message, parse_mode='Markdown')
-
-            db.mark_as_notified(santa_id, config.DRAW_YEAR)
-
-            print(f"📨 Уведомлен Санта {santa_id} (дарит {receiver_name})")
-
-            if wish_list:
-                print(f"   📝 Виш-лист отправлен: {wish_list[:50]}...")
-
-        except Exception as e:
-            print(f"❌ Ошибка при уведомлении пользователя {santa_id}: {e}")
+Удачи в подготовке сюрприза! 🎁
+"""
+                
+                bot_instance.send_message(santa_id, message, parse_mode='Markdown')
+                db.mark_as_notified(santa_id, config.DRAW_YEAR)
+                notified_count += 1
+                
+                print(f"📤 Уведомлен {santa_name} → {receiver_name}")
+                time.sleep(0.5)  # Пауза между отправками
+                
+            except Exception as e:
+                print(f"❌ Ошибка при уведомлении пользователя {santa_id}: {e}")
+        
+        print(f"✅ Уведомлено {notified_count} игроков")
+        
+    except Exception as e:
+        print(f"❌ Общая ошибка в notify_players_after_draw: {e}")
 
 
 def reveal_all_santas(bot_instance, db):
@@ -116,12 +157,16 @@ def reveal_all_santas(bot_instance, db):
                 santa_name = db.get_receiver_pair(user_id, REVEAL_YEAR)
 
                 if santa_name:
-                    message = f"🎉 <b>Внимание! Тайна раскрыта!</b>\n\n"
-                    message += f"Сегодня {REVEAL_DAY}.{REVEAL_MONTH}.{REVEAL_YEAR} - день раскрытия Тайных Сант!\n\n"
-                    message += f"Твоим Тайным Сантой был: <b>{santa_name}</b>\n\n"
-                    message += "Надеемся, тебе понравился подарок! Спасибо за участие в игре! 🎁❤️"
+                    message = f"""
+🎉 *Внимание! Тайна раскрыта!*
 
-                    bot_instance.send_message(user_id, message, parse_mode='HTML')
+Сегодня {REVEAL_DAY}.{REVEAL_MONTH}.{REVEAL_YEAR} - день раскрытия Тайных Сант!
+
+Твоим Тайным Сантой был: *{santa_name}*
+
+Надеемся, тебе понравился подарок! Спасибо за участие в игре! 🎁❤️
+"""
+                    bot_instance.send_message(user_id, message, parse_mode='Markdown')
                     notified_count += 1
                     time.sleep(0.5)  # Пауза между отправками
 
@@ -134,8 +179,58 @@ def reveal_all_santas(bot_instance, db):
         print(f"❌ Ошибка при автоматическом раскрытии Сант: {e}")
 
 
+def notify_all_players(bot_instance, db, year=2025):
+    """Уведомить всех игроков об их подопечных (отдельная функция для ручного вызова)"""
+    return notify_players_after_draw(bot_instance, db)
+
+
+def notify_single_player(bot_instance, user_id, db, year=2025):
+    """Отправить уведомление конкретному игроку."""
+    try:
+        # Проверяем, есть ли пара
+        receiver_name = db.get_santa_pair(user_id, year)
+        
+        if not receiver_name:
+            print(f"ℹ️ Для игрока {user_id} нет получателя")
+            return False
+        
+        # Получаем информацию об игроке
+        player = db.get_player(user_id)
+        santa_name = safe_get_player_field(player, 'full_name', "Тайный Санта")
+        
+        # Получаем информацию о получателе
+        receiver_player = db.get_player_by_name(receiver_name)
+        wishlist = safe_get_player_field(receiver_player, 'wish_list', '')
+        
+        # Формируем сообщение
+        message = f"""
+🎅 *Дорогой {santa_name}!*
+
+Напоминаю, твой подопечный в игре "Тайный Санта":
+
+*Имя:* {receiver_name}
+{f"*Пожелания:* {wishlist}" if wishlist else "*Пожелания:* не указаны"}
+
+📅 *Дедлайн для подарка:* до {config.GIFT_DEADLINE_DAY}.{config.GIFT_DEADLINE_MONTH}.{config.DRAW_YEAR}
+🎁 *Бюджет:* {config.GIFT_BUDGET}
+
+Подготовь креативный подарок! 🎄
+"""
+        
+        bot_instance.send_message(user_id, message, parse_mode='Markdown')
+        print(f"📤 Персональное уведомление отправлено {santa_name} → {receiver_name}")
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ Ошибка отправки персонального уведомления {user_id}: {e}")
+        return False
+
+
 def start_background_check(bot_instance):
+    """Запуск фоновой проверки даты"""
     thread = threading.Thread(target=check_draw_date, args=(bot_instance,), daemon=True)
     thread.start()
     print("✅ Фоновая проверка даты запущена")
+    print(f"📅 Дата жеребьёвки: {config.DRAW_DAY}.{config.DRAW_MONTH}.{config.DRAW_YEAR}")
     print(f"📅 Дата раскрытия Сант: {REVEAL_DAY}.{REVEAL_MONTH}.{REVEAL_YEAR}")
