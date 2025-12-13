@@ -39,7 +39,8 @@ except Exception as e:
 # 4. База данных
 try:
     db = Database()
-    print(f"✅ База данных: {db.db_path if hasattr(db, 'db_path') else 'secret_santa.db'}")
+    db_type = getattr(db, 'db_type', 'unknown')
+    print(f"✅ База данных инициализирована. Тип: {db_type}")
 except Exception as e:
     print(f"❌ Ошибка базы данных: {e}")
     raise
@@ -55,17 +56,39 @@ print("=" * 60)
 print("✅ ВСЕ КОМПОНЕНТЫ ИНИЦИАЛИЗИРОВАНЫ")
 print("=" * 60)
 
-# ================ ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ DATABASE ================
-def get_player_by_name(self, full_name):
-    """Найти игрока по полному имени"""
-    conn = self.get_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT * FROM players WHERE full_name = ?', (full_name,))
-    player = cursor.fetchone()
-    conn.close()
-    return player
+# ================ ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ================
+def get_player_field(player, field_name, default_value=''):
+    """Безопасное получение поля игрока из dict или tuple"""
+    if not player:
+        return default_value
+    
+    if isinstance(player, dict):
+        return player.get(field_name, default_value)
+    else:
+        # Маппинг полей на индексы для tuple (старая SQLite версия)
+        field_map = {
+            'id': 0,
+            'user_id': 1,
+            'username': 2,
+            'full_name': 3,
+            'telegram_name': 4,
+            'wish_list': 5,
+            'registration_date': 6,
+            'is_active': 7
+        }
+        idx = field_map.get(field_name)
+        if idx is not None and len(player) > idx:
+            value = player[idx]
+            return value if value is not None else default_value
+        return default_value
 
-Database.get_player_by_name = get_player_by_name
+def format_date(date_value, default='неизвестно'):
+    """Форматирование даты"""
+    if not date_value:
+        return default
+    if isinstance(date_value, str):
+        return date_value
+    return str(date_value).split()[0]  # Берем только дату без времени
 
 # ================ ОСНОВНЫЕ HANDLERS ================
 @bot.message_handler(commands=['start'])
@@ -76,10 +99,10 @@ def main(message):
     player = db.get_player(user_id)
 
     if player:
-        full_name = player[3]
-        username = player[2] if player[2] else 'не указан'
-        reg_date = player[6] if len(player) > 6 else 'неизвестно'
-        wish_list = player[5] if len(player) > 5 and player[5] else 'еще не добавлен'
+        full_name = get_player_field(player, 'full_name', 'Неизвестно')
+        username = get_player_field(player, 'username', 'не указан')
+        reg_date = format_date(get_player_field(player, 'registration_date'))
+        wish_list = get_player_field(player, 'wish_list', 'еще не добавлен')
 
         welcome_text = f"""
         🎅 *С возвращением, {user.first_name}!* 🎄
@@ -163,35 +186,50 @@ def status_command(message):
                         "❌ Вы не зарегистрированы в игре.\nИспользуйте /start для регистрации.")
         return
     
-    # Получаем данные игрока
-    full_name = player[3] if len(player) > 3 else 'Неизвестно'
-    username = player[2] if len(player) > 2 and player[2] else 'не указан'
-    reg_date = player[6] if len(player) > 6 else 'неизвестно'
-    wish_list = player[5] if len(player) > 5 and player[5] else 'еще не добавлен'
+    # Получаем данные игрока через безопасную функцию
+    full_name = get_player_field(player, 'full_name', 'Неизвестно')
+    username = get_player_field(player, 'username', 'не указан')
+    reg_date = format_date(get_player_field(player, 'registration_date'))
+    wish_list = get_player_field(player, 'wish_list', 'еще не добавлен')
     
     # Проверяем, назначен ли получатель
     receiver_info = ""
     try:
-        # Пробуем получить получателя через santa_pairs
-        conn = db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT p.full_name, p.wish_list 
-            FROM santa_pairs sp 
-            JOIN players p ON sp.receiver_user_id = p.user_id 
-            WHERE sp.santa_user_id = ? AND sp.year = ?
-        ''', (user_id, config.DRAW_YEAR))
-        receiver = cursor.fetchone()
-        conn.close()
-        
-        if receiver:
-            receiver_name = receiver[0] if receiver[0] else 'Неизвестно'
-            receiver_wishlist = receiver[1] if len(receiver) > 1 and receiver[1] else 'нет пожеланий'
-            has_wishlist = "🎁" if receiver_wishlist and receiver_wishlist != 'нет пожеланий' else "📝"
+        receiver_name = db.get_santa_pair(user_id, config.DRAW_YEAR)
+        if receiver_name:
+            # Получаем получателя для проверки wishlist
+            conn = db.get_connection()
+            cursor = conn.cursor()
+            if db.db_type == 'postgresql':
+                cursor.execute('''
+                    SELECT p.wish_list 
+                    FROM santa_pairs sp 
+                    JOIN players p ON sp.receiver_user_id = p.user_id 
+                    WHERE sp.santa_user_id = %s AND sp.year = %s
+                ''', (user_id, config.DRAW_YEAR))
+            else:
+                cursor.execute('''
+                    SELECT p.wish_list 
+                    FROM santa_pairs sp 
+                    JOIN players p ON sp.receiver_user_id = p.user_id 
+                    WHERE sp.santa_user_id = ? AND sp.year = ?
+                ''', (user_id, config.DRAW_YEAR))
+            
+            result = cursor.fetchone()
+            conn.close()
+            
+            receiver_wishlist = ''
+            if result:
+                if isinstance(result, dict):
+                    receiver_wishlist = result.get('wish_list', '')
+                else:
+                    receiver_wishlist = result[0] if len(result) > 0 else ''
+            
+            has_wishlist = "🎁" if receiver_wishlist and receiver_wishlist.strip() else "📝"
             
             receiver_info = f"""🎅 *Твой подопечный:*
 • *Имя:* {receiver_name}
-• *Пожелания:* {has_wishlist} {'есть' if receiver_wishlist and receiver_wishlist != 'нет пожеланий' else 'нет'}
+• *Пожелания:* {has_wishlist} {'есть' if receiver_wishlist and receiver_wishlist.strip() else 'нет'}
 """
         else:
             receiver_info = "🎅 *Твой подопечный:* пока не назначен\n"
@@ -276,7 +314,10 @@ def process_wishlist(message):
     
     conn = db.get_connection()
     cursor = conn.cursor()
-    cursor.execute('UPDATE players SET wish_list = ? WHERE user_id = ?', (wishlist, user_id))
+    if db.db_type == 'postgresql':
+        cursor.execute('UPDATE players SET wish_list = %s WHERE user_id = %s', (wishlist, user_id))
+    else:
+        cursor.execute('UPDATE players SET wish_list = ? WHERE user_id = ?', (wishlist, user_id))
     conn.commit()
     conn.close()
     
@@ -300,7 +341,7 @@ def my_wish_command(message):
                         "❌ Вы не зарегистрированы в игре.\nИспользуйте /start для регистрации.")
         return
     
-    wish_list = player[5] if len(player) > 5 and player[5] else 'еще не добавлен'
+    wish_list = get_player_field(player, 'wish_list', 'еще не добавлен')
     
     if wish_list and wish_list != 'еще не добавлен':
         response = f"""
@@ -512,8 +553,12 @@ def save_wishlist(message):
 
     conn = db.get_connection()
     cursor = conn.cursor()
-
-    cursor.execute('UPDATE players SET wish_list = ? WHERE user_id = ?', (wishlist, user_id))
+    
+    if db.db_type == 'postgresql':
+        cursor.execute('UPDATE players SET wish_list = %s WHERE user_id = %s', (wishlist, user_id))
+    else:
+        cursor.execute('UPDATE players SET wish_list = ? WHERE user_id = ?', (wishlist, user_id))
+        
     conn.commit()
     conn.close()
 
@@ -531,8 +576,12 @@ def save_wishlist_command(message):
 
     conn = db.get_connection()
     cursor = conn.cursor()
-
-    cursor.execute('UPDATE players SET wish_list = ? WHERE user_id = ?', (wishlist, user_id))
+    
+    if db.db_type == 'postgresql':
+        cursor.execute('UPDATE players SET wish_list = %s WHERE user_id = %s', (wishlist, user_id))
+    else:
+        cursor.execute('UPDATE players SET wish_list = ? WHERE user_id = ?', (wishlist, user_id))
+        
     conn.commit()
     conn.close()
 
@@ -570,7 +619,9 @@ def handle_admin_callback(call):
                     safe_name = full_name.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
                     username_display = f"@{username}" if username else "без username"
                     player_info = db.get_player(user_id)
-                    has_wishlist = "✅" if player_info and len(player_info) > 5 and player_info[5] else "❌"
+                    # Используем безопасную функцию для получения wishlist
+                    wish_list = get_player_field(player_info, 'wish_list', '')
+                    has_wishlist = "✅" if wish_list and wish_list.strip() else "❌"
                     message += f"{i}. {safe_name} ({username_display}) {has_wishlist}\n"
             else:
                 message += "Нет зарегистрированных игроков"
@@ -619,22 +670,51 @@ def handle_admin_callback(call):
         elif call.data == 'admin_view_db':
             conn = db.get_connection()
             cursor = conn.cursor()
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+            
+            if db.db_type == 'postgresql':
+                cursor.execute("""
+                    SELECT table_name 
+                    FROM information_schema.tables 
+                    WHERE table_schema = 'public'
+                """)
+            else:
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+                
             tables = cursor.fetchall()
             message = "<b>📊 База данных:</b>\n\n"
-            for table_name, in tables:
+            
+            for table_row in tables:
+                if db.db_type == 'postgresql':
+                    table_name = table_row['table_name']
+                else:
+                    table_name = table_row[0]
+                    
                 cursor.execute(f"SELECT COUNT(*) FROM {table_name};")
-                count = cursor.fetchone()[0]
+                count_result = cursor.fetchone()
+                count = count_result[0] if isinstance(count_result, tuple) else count_result['count']
+                
                 message += f"• <b>{table_name}:</b> {count} записей\n"
+                
                 if count > 0 and table_name == 'players':
                     cursor.execute("SELECT full_name, username, wish_list FROM players LIMIT 5;")
                     players_data = cursor.fetchall()
                     message += "  <i>Последние игроки:</i>\n"
-                    for name, username, wish_list in players_data:
-                        safe_name = name.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                    
+                    for row in players_data:
+                        if isinstance(row, dict):
+                            name = row['full_name']
+                            username = row['username']
+                            wish_list = row['wish_list']
+                        else:
+                            name = row[0]
+                            username = row[1]
+                            wish_list = row[2]
+                            
+                        safe_name = name.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;') if name else 'Без имени'
                         username_display = f"@{username}" if username else "нет"
-                        has_wishlist = "🎁" if wish_list else "❌"
+                        has_wishlist = "🎁" if wish_list and wish_list.strip() else "❌"
                         message += f"  - {safe_name} ({username_display}) {has_wishlist}\n"
+                        
             conn.close()
             bot.send_message(call.message.chat.id, message, parse_mode='HTML')
 
@@ -673,8 +753,12 @@ def handle_admin_callback(call):
         elif call.data == 'admin_confirm_clear_pairs':
             conn = db.get_connection()
             cursor = conn.cursor()
-            cursor.execute("DELETE FROM santa_pairs WHERE year = ?", (config.DRAW_YEAR,))
-            cursor.execute("DELETE FROM revealed_pairs WHERE year = ?", (config.DRAW_YEAR,))
+            if db.db_type == 'postgresql':
+                cursor.execute("DELETE FROM santa_pairs WHERE year = %s", (config.DRAW_YEAR,))
+                cursor.execute("DELETE FROM revealed_pairs WHERE year = %s", (config.DRAW_YEAR,))
+            else:
+                cursor.execute("DELETE FROM santa_pairs WHERE year = ?", (config.DRAW_YEAR,))
+                cursor.execute("DELETE FROM revealed_pairs WHERE year = ?", (config.DRAW_YEAR,))
             conn.commit()
             conn.close()
             bot.send_message(call.message.chat.id, "🗑️ Пары очищены. Можно провести жеребьёвку заново.")
@@ -682,32 +766,68 @@ def handle_admin_callback(call):
         elif call.data == 'admin_view_pairs':
             conn = db.get_connection()
             cursor = conn.cursor()
-            cursor.execute('''
-                SELECT 
-                    santa.full_name as santa,
-                    receiver.full_name as receiver,
-                    santa.user_id as santa_id,
-                    receiver.user_id as receiver_id,
-                    receiver.wish_list as wish_list,
-                    CASE WHEN rp.id IS NOT NULL THEN '✅' ELSE '❌' END as revealed
-                FROM santa_pairs sp
-                JOIN players santa ON sp.santa_user_id = santa.user_id
-                JOIN players receiver ON sp.receiver_user_id = receiver.user_id
-                LEFT JOIN revealed_pairs rp ON sp.receiver_user_id = rp.receiver_user_id AND sp.year = rp.year
-                WHERE sp.year = ?
-            ''', (config.DRAW_YEAR,))
+            
+            if db.db_type == 'postgresql':
+                cursor.execute('''
+                    SELECT 
+                        santa.full_name as santa,
+                        receiver.full_name as receiver,
+                        santa.user_id as santa_id,
+                        receiver.user_id as receiver_id,
+                        receiver.wish_list as wish_list,
+                        CASE WHEN rp.id IS NOT NULL THEN '✅' ELSE '❌' END as revealed
+                    FROM santa_pairs sp
+                    JOIN players santa ON sp.santa_user_id = santa.user_id
+                    JOIN players receiver ON sp.receiver_user_id = receiver.user_id
+                    LEFT JOIN revealed_pairs rp ON sp.receiver_user_id = rp.receiver_user_id AND sp.year = rp.year
+                    WHERE sp.year = %s
+                ''', (config.DRAW_YEAR,))
+            else:
+                cursor.execute('''
+                    SELECT 
+                        santa.full_name as santa,
+                        receiver.full_name as receiver,
+                        santa.user_id as santa_id,
+                        receiver.user_id as receiver_id,
+                        receiver.wish_list as wish_list,
+                        CASE WHEN rp.id IS NOT NULL THEN '✅' ELSE '❌' END as revealed
+                    FROM santa_pairs sp
+                    JOIN players santa ON sp.santa_user_id = santa.user_id
+                    JOIN players receiver ON sp.receiver_user_id = receiver.user_id
+                    LEFT JOIN revealed_pairs rp ON sp.receiver_user_id = rp.receiver_user_id AND sp.year = rp.year
+                    WHERE sp.year = ?
+                ''', (config.DRAW_YEAR,))
+                
             pairs = cursor.fetchall()
             conn.close()
+            
             if not pairs:
                 bot.send_message(call.message.chat.id, "⚠️ Пары еще не созданы")
                 return
+                
             message = "<b>🎅 Созданные пары:</b>\n\n"
-            for santa_name, receiver_name, santa_id, receiver_id, wish_list, revealed in pairs:
-                safe_santa = santa_name.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-                safe_receiver = receiver_name.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-                has_wishlist = "🎁" if wish_list else "❌"
+            for pair in pairs:
+                if isinstance(pair, dict):
+                    santa_name = pair['santa']
+                    receiver_name = pair['receiver']
+                    santa_id = pair['santa_id']
+                    receiver_id = pair['receiver_id']
+                    wish_list = pair['wish_list']
+                    revealed = pair['revealed']
+                else:
+                    santa_name = pair[0]
+                    receiver_name = pair[1]
+                    santa_id = pair[2]
+                    receiver_id = pair[3]
+                    wish_list = pair[4]
+                    revealed = pair[5]
+                    
+                safe_santa = santa_name.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;') if santa_name else 'Без имени'
+                safe_receiver = receiver_name.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;') if receiver_name else 'Без имени'
+                has_wishlist = "🎁" if wish_list and wish_list.strip() else "❌"
                 message += f"• <b>{safe_santa}</b> → <b>{safe_receiver}</b> {revealed} {has_wishlist}\n"
                 message += f"  (ID: {santa_id} → {receiver_id})\n\n"
+                
             message += f"\n<b>Всего пар:</b> {len(pairs)}"
             bot.send_message(call.message.chat.id, message, parse_mode='HTML')
 
@@ -727,13 +847,16 @@ def process_reveal_one(message):
         if not player:
             bot.send_message(message.chat.id, f"❌ Игрок с ID {user_id} не найден.")
             return
-        full_name = player[3]
+        
+        full_name = get_player_field(player, 'full_name', 'Неизвестно')
+        
         if db.is_pair_revealed(user_id, REVEAL_YEAR):
             santa_name = db.get_receiver_pair(user_id, REVEAL_YEAR)
             bot.send_message(message.chat.id,
                              f"ℹ️ Пара для <b>{full_name}</b> уже раскрыта.\nСанта: <b>{santa_name}</b>",
                              parse_mode='HTML')
             return
+            
         santa_name = db.reveal_pair(user_id, REVEAL_YEAR, by_admin=True)
         if santa_name:
             try:
@@ -741,14 +864,17 @@ def process_reveal_one(message):
                 bot.send_message(user_id, receiver_msg, parse_mode='HTML')
             except Exception as e:
                 print(f"Ошибка при уведомлении получателя: {e}")
+                
             try:
                 santa_player = db.get_player_by_name(santa_name)
                 if santa_player:
-                    santa_id = santa_player[1]
-                    santa_msg = f"🎅 <b>Внимание!</b>\n\nОрганизатор раскрыл твою тайну досрочно!\n\nТвой подопечный <b>{full_name}</b> теперь знает, что его Сантой был ты!\n\nСпасибо за участие! 🎁"
-                    bot.send_message(santa_id, santa_msg, parse_mode='HTML')
+                    santa_id = get_player_field(santa_player, 'user_id')
+                    if santa_id:
+                        santa_msg = f"🎅 <b>Внимание!</b>\n\nОрганизатор раскрыл твою тайну досрочно!\n\nТвой подопечный <b>{full_name}</b> теперь знает, что его Сантой был ты!\n\nСпасибо за участие! 🎁"
+                        bot.send_message(santa_id, santa_msg, parse_mode='HTML')
             except Exception as e:
                 print(f"Ошибка при уведомлении Санты: {e}")
+                
             bot.send_message(message.chat.id,
                              f"✅ Санта для <b>{full_name}</b> раскрыт!\nСанта: <b>{santa_name}</b>\n\nОба игрока уведомлены.",
                              parse_mode='HTML')
