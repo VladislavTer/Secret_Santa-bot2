@@ -1,7 +1,7 @@
 import os
 
 # Простой и надёжный config
-BOT_TOKEN = os.environ.get('BOT_TOKEN', '8425931021:AAFk0RDxPhzpUH30kJyFAjPEDMBxQnfkgIA')
+BOT_TOKEN = os.environ.get('BOT_TOKEN', '8113476209:AAFD9UKvOSLVVmNSAVrLExcaJhFn28nHlQM')
 
 print(f"✅ BOT_TOKEN загружен: {BOT_TOKEN[:15]}...")
 
