@@ -360,61 +360,131 @@ class Database:
 
     # === МЕТОДЫ ДЛЯ ЖЕРЕБЬЁВКИ И ПАР ===
 
-    def perform_draw(self, year=2025):
-        """Проведение жеребьёвки."""
-        try:
-            print(f"🎅 Проведение жеребьёвки для {year} года...")
-            
-            # Проверяем, не проводилась ли уже жеребьёвка
-            query = 'SELECT COUNT(*) as count FROM santa_pairs WHERE year = ?'
-            result = self._execute_query(query, (year,), fetchone=True)
-            
-            if result and result['count'] > 0:
-                print(f"⚠️ Жеребьёвка уже проводилась в {year} году!")
-                return False
+    def perform_draw(self, year=2025, bot=None):
+    """Проведение жеребьёвки и отправка уведомлений."""
+    try:
+        print(f"🎅 Проведение жеребьёвки для {year} года...")
+        
+        # Проверяем, не проводилась ли уже жеребьёвка
+        query = 'SELECT COUNT(*) as count FROM santa_pairs WHERE year = ?'
+        result = self._execute_query(query, (year,), fetchone=True)
+        
+        if result and result['count'] > 0:
+            print(f"⚠️ Жеребьёвка уже проводилась в {year} году!")
+            return False
 
-            # Получаем активных игроков
-            players = self.get_all_active_players()
-            player_ids = [player[0] for player in players]
+        # Получаем активных игроков
+        players = self.get_all_active_players()
+        player_ids = [player[0] for player in players]
 
-            if len(player_ids) < 2:
-                print("⚠️ Недостаточно игроков для жеребьёвки!")
-                return False
+        if len(player_ids) < 2:
+            print("⚠️ Недостаточно игроков для жеребьёвки!")
+            return False
 
-            # Алгоритм жеребьёвки
-            receivers = player_ids.copy()
+        # Алгоритм жеребьёвки
+        receivers = player_ids.copy()
+        random.shuffle(receivers)
+
+        attempts = 0
+        while any(santa == receiver for santa, receiver in zip(player_ids, receivers)) and attempts < 100:
             random.shuffle(receivers)
+            attempts += 1
 
-            attempts = 0
-            while any(santa == receiver for santa, receiver in zip(player_ids, receivers)) and attempts < 100:
-                random.shuffle(receivers)
-                attempts += 1
+        if attempts >= 100:
+            print("❌ Не удалось создать уникальные пары!")
+            return False
 
-            if attempts >= 100:
-                print("❌ Не удалось создать уникальные пары!")
-                return False
+        # Создаем пары
+        pairs_count = 0
+        pairs_info = []  # Сохраняем информацию о парах для уведомлений
+        
+        for santa_id, receiver_id in zip(player_ids, receivers):
+            if self.db_type == 'postgresql':
+                self._execute_query('''
+                    INSERT INTO santa_pairs (santa_user_id, receiver_user_id, year)
+                    VALUES (%s, %s, %s)
+                ''', (santa_id, receiver_id, year))
+            else:
+                self._execute_query('''
+                    INSERT INTO santa_pairs (santa_user_id, receiver_user_id, year)
+                    VALUES (?, ?, ?)
+                ''', (santa_id, receiver_id, year))
+            
+            # Сохраняем информацию о паре
+            santa_info = self.get_player(santa_id)
+            receiver_info = self.get_player(receiver_id)
+            
+            if santa_info and receiver_info:
+                pairs_info.append({
+                    'santa_id': santa_id,
+                    'santa_name': santa_info.get('full_name', f'Игрок {santa_id}'),
+                    'receiver_id': receiver_id,
+                    'receiver_name': receiver_info.get('full_name', f'Игрок {receiver_id}'),
+                    'receiver_wishlist': receiver_info.get('wish_list', '')
+                })
+            
+            pairs_count += 1
 
-            # Создаем пары
-            pairs_count = 0
-            for santa_id, receiver_id in zip(player_ids, receivers):
-                if self.db_type == 'postgresql':
-                    self._execute_query('''
-                        INSERT INTO santa_pairs (santa_user_id, receiver_user_id, year)
-                        VALUES (%s, %s, %s)
-                    ''', (santa_id, receiver_id, year))
-                else:
-                    self._execute_query('''
-                        INSERT INTO santa_pairs (santa_user_id, receiver_user_id, year)
-                        VALUES (?, ?, ?)
-                    ''', (santa_id, receiver_id, year))
-                pairs_count += 1
+        print(f"✅ Жеребьёвка проведена! Создано {pairs_count} пар.")
+        
+        # ОТПРАВКА УВЕДОМЛЕНИЙ ИГРОКАМ
+        if bot and pairs_info:
+            print(f"📨 Отправка уведомлений {len(pairs_info)} игрокам...")
+            notified_count = self._send_notifications(bot, pairs_info)
+            print(f"✅ Отправлено {notified_count} уведомлений")
+        
+        return True
+            
+    except Exception as e:
+        print(f"❌ Ошибка при проведении жеребьёвки: {e}")
+        return False
 
-            print(f"✅ Жеребьёвка проведена! Создано {pairs_count} пар.")
-            return True
+    def _send_notifications(self, bot, pairs_info):
+    """Отправка уведомлений игрокам об их подопечных."""
+    notified_count = 0
+    
+    for pair in pairs_info:
+        try:
+            santa_id = pair['santa_id']
+            receiver_name = pair['receiver_name']
+            receiver_wishlist = pair['receiver_wishlist']
+            
+            # Формируем сообщение
+            message = f"""
+                            🎅 *Жеребьёвка проведена!*
+                            
+                            Твоим подопечным в игре "Тайный Санта" назначен: 
+                            *{receiver_name}*
+                            
+                            🎁 *Информация о подопечном:*
+                            {f"📝 *Пожелания:* {receiver_wishlist}" if receiver_wishlist else "📝 *Пожелания не указаны*"}
+                            
+                            📅 *Напоминание о датах:*
+                            • Дедлайн для подарков: до 25.12.2025
+                            • Раскрытие Сант: 31.12.2025
+                            
+                            *Совет:* Прояви креативность! Бюджет подарка: ~500₽
+                            
+                            Удачи в подготовке подарка! 🎄
+                            """
+            
+            # Отправляем сообщение
+            bot.send_message(santa_id, message, parse_mode='Markdown')
+            print(f"   📤 Уведомление отправлено {pair['santa_name']} → {receiver_name}")
+            
+            # Помечаем как уведомленного
+            self.mark_as_notified(santa_id, 2025)
+            notified_count += 1
+            
+            # Небольшая задержка между сообщениями
+            import time
+            time.sleep(0.5)
             
         except Exception as e:
-            print(f"❌ Ошибка при проведении жеребьёвки: {e}")
-            return False
+            print(f"   ❌ Ошибка отправки уведомления {pair['santa_name']}: {e}")
+    
+    return notified_count
+
 
     def get_santa_pair(self, user_id, year=2025):
         """Получить получателя для данного Санты."""
