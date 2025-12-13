@@ -5,17 +5,7 @@ from datetime import date
 import config
 from database import Database
 from flask import Flask, request
-import threading
 import time
-
-# Проверка зависимостей перед запуском
-try:
-    import watchdog
-    import psutil
-    print("✅ Зависимости watchdog и psutil загружены")
-except ImportError as e:
-    print(f"⚠️  Отсутствует зависимость: {e}")
-    print("⚠️  Установи: pip install watchdog psutil")
 
 # ================ ИНИЦИАЛИЗАЦИЯ ================
 print("=" * 60)
@@ -34,33 +24,6 @@ def health_check():
 @app.route('/')
 def home():
     return '🎅 Тайный Санта работает!'
-
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    if request.headers.get('content-type') == 'application/json':
-        json_string = request.get_data().decode('utf-8')
-        update = telebot.types.Update.de_json(json_string)
-        bot.process_new_updates([update])
-        return ''
-    return 'OK'
-
-@app.route('/setup_webhook', methods=['GET'])
-def setup_webhook_route():
-    """Ручная установка вебхука"""
-    try:
-        import time
-        domain = os.environ.get('RAILWAY_PUBLIC_DOMAIN', 'secretsanta-bot2-production.up.railway.app')
-        webhook_url = f"https://{domain}/webhook"
-        
-        print(f"🌐 Устанавливаю вебхук: {webhook_url}")
-        
-        bot.remove_webhook()
-        time.sleep(1)
-        bot.set_webhook(url=webhook_url)
-        
-        return "✅ Вебхук установлен!"
-    except Exception as e:
-        return f"❌ Ошибка: {e}"
 
 print("✅ Flask app создан")
 
@@ -520,48 +483,21 @@ def process_reveal_one(message):
     except Exception as e:
         bot.send_message(message.chat.id, f"❌ Ошибка: {str(e)}")
 
-# ================ АВТОМАТИЧЕСКИЙ ЗАПУСК POLLING ================
-def start_polling():
-    """Запуск бота в режиме polling"""
+# ================ ЗАПУСК ПРИЛОЖЕНИЯ ================
+if __name__ == '__main__':
     print("=" * 60)
-    print("📡 ЗАПУСКАЮ POLLING ДЛЯ TELEGRAM БОТА")
+    print("🚀 ЗАПУСК ТЕЛЕГРАМ БОТА (основной процесс)")
     print("=" * 60)
     
-    # Ждём 10 секунд чтобы веб-сервер запустился
-    time.sleep(10)
-    
-    # Удаляем вебхук на всякий случай
-    try:
-        bot.remove_webhook()
-        print("🗑️  Вебхук удалён")
-    except:
-        pass
-    
+    # Удаляем вебхук, чтобы не мешал polling
+    bot.remove_webhook()
     time.sleep(2)
     
-    # Запускаем polling
-    print("🤖 Бот запущен в режиме polling")
-    print("✅ Команды должны работать: /start, /admin, etc.")
-    
-    try:
-       bot.infinity_polling(
+    # Запускаем бота в режиме polling.
+    # Эта команда БЛОКИРУЕТ выполнение, пока бот работает.
+    # Именно это нужно Railway, чтобы контейнер продолжал работать.
+    bot.infinity_polling(
         timeout=60, 
         long_polling_timeout=60,
-        # restart_on_change=True,  # Закомментировано или удалено
         logger_level='INFO'
     )
-    except Exception as e:
-        print(f"❌ Ошибка polling: {e}")
-        # Пробуем перезапустить через 10 секунд
-        time.sleep(10)
-        bot.infinity_polling(timeout=60, long_polling_timeout=60)
-
-# Запускаем polling в отдельном потоке
-polling_thread = threading.Thread(target=start_polling, daemon=True)
-polling_thread.start()
-
-print("✅ Telegram polling запущен в фоновом потоке")
-print("✅ Flask сервер работает для health-check")
-print("=" * 60)
-print("🚀 ВСЕ СИСТЕМЫ ЗАПУЩЕНЫ!")
-print("=" * 60)
