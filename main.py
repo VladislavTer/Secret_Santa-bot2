@@ -5,6 +5,8 @@ from datetime import date
 import config
 from database import Database
 from flask import Flask, request
+import threading
+import time
 
 # ================ ИНИЦИАЛИЗАЦИЯ ================
 print("=" * 60)
@@ -23,6 +25,33 @@ def health_check():
 @app.route('/')
 def home():
     return '🎅 Тайный Санта работает!'
+
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    if request.headers.get('content-type') == 'application/json':
+        json_string = request.get_data().decode('utf-8')
+        update = telebot.types.Update.de_json(json_string)
+        bot.process_new_updates([update])
+        return ''
+    return 'OK'
+
+@app.route('/setup_webhook', methods=['GET'])
+def setup_webhook_route():
+    """Ручная установка вебхука"""
+    try:
+        import time
+        domain = os.environ.get('RAILWAY_PUBLIC_DOMAIN', 'secretsanta-bot2-production.up.railway.app')
+        webhook_url = f"https://{domain}/webhook"
+        
+        print(f"🌐 Устанавливаю вебхук: {webhook_url}")
+        
+        bot.remove_webhook()
+        time.sleep(1)
+        bot.set_webhook(url=webhook_url)
+        
+        return "✅ Вебхук установлен!"
+    except Exception as e:
+        return f"❌ Ошибка: {e}"
 
 print("✅ Flask app создан")
 
@@ -111,6 +140,33 @@ def main(message):
                      f'Привет, {user_name}. Мы рады приветствовать тебя в игре "Тайный Санта🎅🎄". Перед началом, рекомендуем ознакомиться с правилами игры!',
                      reply_markup=markup)
 
+@bot.message_handler(commands=['admin'])
+def admin_panel(message):
+    """Панель администратора"""
+    # Проверка прав администратора (добавь свою логику)
+    if message.from_user.id not in [123456789]:  # Замени на свои ID
+        return
+    
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    
+    buttons = [
+        types.InlineKeyboardButton('🔮 Провести жеребьёвку', callback_data='admin_draw'),
+        types.InlineKeyboardButton('📊 Статистика', callback_data='admin_stats'),
+        types.InlineKeyboardButton('📨 Уведомить всех', callback_data='admin_notify'),
+        types.InlineKeyboardButton('👁️ Раскрыть всех', callback_data='admin_reveal_all'),
+        types.InlineKeyboardButton('👤 Раскрыть одного', callback_data='admin_reveal_one'),
+        types.InlineKeyboardButton('🗃️ Просмотр БД', callback_data='admin_view_db'),
+        types.InlineKeyboardButton('🧪 Тестовые игроки', callback_data='admin_add_test'),
+        types.InlineKeyboardButton('🗑️ Очистить пары', callback_data='admin_clear_pairs'),
+        types.InlineKeyboardButton('🎅 Созданные пары', callback_data='admin_view_pairs'),
+    ]
+    
+    markup.add(*buttons)
+    
+    bot.send_message(message.chat.id, 
+                    "🛠️ *Панель администратора*\n\nВыберите действие:",
+                    reply_markup=markup,
+                    parse_mode='Markdown')
 
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callbacks(call):
@@ -455,50 +511,48 @@ def process_reveal_one(message):
     except Exception as e:
         bot.send_message(message.chat.id, f"❌ Ошибка: {str(e)}")
 
-# ================ WEBHOOK HANDLER ================
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    if request.headers.get('content-type') == 'application/json':
-        json_string = request.get_data().decode('utf-8')
-        update = telebot.types.Update.de_json(json_string)
-        bot.process_new_updates([update])
-        return ''
-    return 'OK'
-
-@app.route('/setup_webhook', methods=['GET'])
-def setup_webhook_route():
-    """Ручная установка вебхука"""
-    try:
-        import time
-        domain = os.environ.get('RAILWAY_PUBLIC_DOMAIN', 'secretsanta-bot2-production.up.railway.app')
-        webhook_url = f"https://{domain}/webhook"
-        
-        print(f"🌐 Устанавливаю вебхук: {webhook_url}")
-        
-        bot.remove_webhook()
-        time.sleep(1)
-        bot.set_webhook(url=webhook_url)
-        
-        return "✅ Вебхук установлен!"
-    except Exception as e:
-        return f"❌ Ошибка: {e}"
-
-# ================ ЗАПУСК ПРИЛОЖЕНИЯ ================
-# Этот код выполнится только при прямом запуске файла
-# if __name__ == '__main__':
-#     print("=" * 60)
-#     print("🚀 ЗАПУСК ПРИЛОЖЕНИЯ")
-#     print("=" * 60)
+# ================ АВТОМАТИЧЕСКИЙ ЗАПУСК POLLING ================
+def start_polling():
+    """Запуск бота в режиме polling"""
+    print("=" * 60)
+    print("📡 ЗАПУСКАЮ POLLING ДЛЯ TELEGRAM БОТА")
+    print("=" * 60)
     
-#     print("⚙️  Настройка вебхука...")
-#     try:
-#         # Используем polling для локальной разработки
-#         print("📡 Запуск в режиме polling...")
-#         bot.remove_webhook()
-#         bot.infinity_polling(timeout=60, long_polling_timeout=60)
-#     except Exception as e:
-#         print(f"❌ Ошибка при запуске бота: {e}")
-#         raise
-# else:
-#     # При импорте модуля - просто инициализация
-#     print("✅ main.py импортирован как модуль")
+    # Ждём 10 секунд чтобы веб-сервер запустился
+    time.sleep(10)
+    
+    # Удаляем вебхук на всякий случай
+    try:
+        bot.remove_webhook()
+        print("🗑️  Вебхук удалён")
+    except:
+        pass
+    
+    time.sleep(2)
+    
+    # Запускаем polling
+    print("🤖 Бот запущен в режиме polling")
+    print("✅ Команды должны работать: /start, /admin, etc.")
+    
+    try:
+        bot.infinity_polling(
+            timeout=60, 
+            long_polling_timeout=60,
+            restart_on_change=True,
+            logger_level='INFO'
+        )
+    except Exception as e:
+        print(f"❌ Ошибка polling: {e}")
+        # Пробуем перезапустить через 10 секунд
+        time.sleep(10)
+        bot.infinity_polling(timeout=60, long_polling_timeout=60)
+
+# Запускаем polling в отдельном потоке
+polling_thread = threading.Thread(target=start_polling, daemon=True)
+polling_thread.start()
+
+print("✅ Telegram polling запущен в фоновом потоке")
+print("✅ Flask сервер работает для health-check")
+print("=" * 60)
+print("🚀 ВСЕ СИСТЕМЫ ЗАПУЩЕНЫ!")
+print("=" * 60)
